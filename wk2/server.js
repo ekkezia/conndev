@@ -145,46 +145,47 @@ const io = new Server(server, {
   },
 });
 
-// --- Socket.IO namespace for ARDUINO (Optional) ---
-const arduinoNS = io.of('/arduino');
+// // --- Socket.IO namespace for ARDUINO (Optional) ---
+// const arduinoNS = io.of('/arduino');
 
-arduinoNS.on('connection', (socket) => {
-  console.log('🛠 Arduino connected:', socket.id);
+// arduinoNS.on('connection', (socket) => {
+//   console.log('🛠 Arduino connected:', socket.id);
 
-  // Arduino sends sensor data
-  socket.on('sensor-data', (data) => {
-    if (!data?.sensor) return;
+//   // Arduino sends sensor data
+//   socket.on('sensor-data', (data) => {
+//     if (!data?.sensor) return;
 
-    const entry = { ...data, timestamp: data.timestamp || Date.now() };
-    sensorData.push(entry);
+//     const entry = { ...data, timestamp: data.timestamp || Date.now() };
+//     sensorData.push(entry);
 
-    // keep last 1000 entries
-    if (sensorData.length > 1000) sensorData.shift();
+//     // keep last 1000 entries
+//     if (sensorData.length > 1000) sensorData.shift();
 
-    // broadcast to all dashboard clients
-    io.of('/dashboard').emit('sensor-update', entry);
+//     // broadcast to all dashboard clients
+//     io.of('/dashboard').emit('sensor-update', entry);
 
-    console.log('📡 Sensor data received:', entry);
-  });
+//     console.log('📡 Sensor data received:', entry);
+//   });
 
-  socket.on('disconnect', () => {
-    console.log('🛠 Arduino disconnected:', socket.id);
-  });
-});
+//   socket.on('disconnect', () => {
+//     console.log('🛠 Arduino disconnected:', socket.id);
+//   });
+// });
 
 // --- Socket.IO namespace for DASHBOARD / REMOTE ---
-const dashboardNS = io.of('/dashboard');
-
-dashboardNS.on('connection', (socket) => {
+io.on('connection', (socket) => {
   console.log('🔌 Dashboard connected:', socket.id);
   socket.emit('sensor-initial-data', sensorData); // send latest data to client upon connection
 
-  socket.on('sensor-realtime', (data) => {
+  // on receiving realtime sensor data (sensor-realtime-send) from remote client
+  socket.on('sensor-realtime-send', (data) => {
     if (!data?.sensor) return;
     
     const entry = { ...data, timestamp: data.timestamp || Date.now() };
     if (sensorData.length >= 1000) sensorData.shift();
     sensorData.push(entry);
+    // then broadcast to all clients
+    io.emit('sensor-realtime-receive', entry);
   })
 
   socket.on('disconnect', () => {
