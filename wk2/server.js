@@ -1,80 +1,86 @@
-// responds to Arduino requests & responses (via TCP)
+// server.js
 const net = require('net');
+const express = require('express');
+const http = require('http');
+const cors = require('cors');
 const { WebSocketServer } = require('ws');
 
 const tcpPort = 3000;
-
+const httpPort = 4000;
 let sensorData = [];
 
+// --- TCP SERVER FOR ARDUINO ---
 const tcpServer = net.createServer((socket) => {
   console.log('Arduino connected:', socket.remoteAddress + ':' + socket.remotePort);
 
   socket.on('data', (data) => {
     try {
       const parsed = JSON.parse(data.toString());
-    //   console.log('Received data from Arduino:', parsed);
       if (parsed && parsed.sensor !== undefined) {
-        sensorData.push({ sensor: parsed.sensor, timestamp: parsed.timestamp || null });
-        // broadcast to WebSocket clients
-        broadcastSensorData({ sensor: parsed.sensor, timestamp: parsed.timestamp });
-        console.log('Received sensor data from Arduino:', sensorData.length);
-      }
-
-      // maybe purge sensorData if it reaches 1000 entry to offload the server
+        const entry = {
+          sensor: parsed.sensor,
+          timestamp: parsed.timestamp || Date.now(),
+          source: 'arduino' // tag as Arduino
+        };
+        sensorData.push(entry);
+        broadcastSensorData(entry);
         if (sensorData.length > 1000) sensorData = [];
+        console.log('📡 Arduino data received. Total entries:', sensorData.length);
+      }
     } catch (e) {
-    //   console.error('Error parsing data from Arduino:', e.message || e);
+      console.error('Error parsing Arduino data:', e.message || e);
     }
   });
 
-  socket.on('end', () => {
-    console.log('Arduino disconnected:', socket.remoteAddress + ':' + socket.remotePort);
-  });
-
-  socket.on('error', (err) => {
-    console.error('Socket error:', err);
-  });
+  socket.on('end', () => console.log('Arduino disconnected:', socket.remoteAddress));
+  socket.on('error', (err) => console.error('Arduino socket error:', err));
 });
 
-tcpServer.listen(tcpPort, () => {
-  console.log(`🛜 TCP server for Arduino running at port ${tcpPort}`);
-});
+tcpServer.listen(tcpPort, () => console.log(`🛜 TCP server running on port ${tcpPort}`));
 
-// --- BROWSER DASHBOARD SERVER ---
-// only responds to HTTP requests (browser), not Arduino
-// to serve historical data via REST API to browser client
-const express = require('express'); // useful for HTTPS 
-const http = require('http');
-const cors = require('cors');
-
+// --- EXPRESS HTTP SERVER ---
 const app = express();
-const port = 4000;
-
-// enable CORS (development)
 app.use(cors());
 
-app.get('/', (req, res) => {
-  res.send({ status: 'ok', message: 'Hello!' });
-});
+app.get('/', (req, res) => res.send({ status: 'ok', message: 'Hello!' }));
 
-// --- (Optional) Get latest sensor data(s) (historical) ---
+// Historical sensor data
 app.get('/sensor-data', (req, res) => {
   res.json(sensorData);
-  console.log('🍟 Latest sensor data(s) to client:', sensorData.length);
+  console.log('🍟 Sent historical sensor data. Total:', sensorData.length);
 });
 
-// --- WEBSOCKET DASHBOARD SERVER ---
-// for realtime purposes
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server }); // attach HTTP server
 
-wss.on('connection', (ws) => {
-  console.log('🔌 Dashboard connected via WebSocket');
-  ws.send(JSON.stringify(sensorData)); // send latest data upon client connection
+// --- WEBSOCKET SERVER (MERGED) ---
+const wss = new WebSocketServer({ server }); // single path for all clients
 
-  ws.on('close', () => {
-    console.log('🪫 Dashboard disconnected');
+wss.on('connection', (ws, req) => {
+  console.log('🔌 WebSocket client connected:', req.socket.remoteAddress);
+
+  // Send all current sensorData on connection
+  ws.send(JSON.stringify(sensorData));
+
+  ws.on('message', (message) => {
+    try {
+      const parsed = JSON.parse(message.toString());
+      if (parsed && parsed.sensor !== undefined) {
+        const entry = {
+          sensor: parsed.sensor,
+          timestamp: parsed.timestamp || Date.now(),
+          source: 'remote' // tag as remote
+        };
+        sensorData.push(entry);
+        broadcastSensorData(entry);
+        if (sensorData.length > 1000) sensorData = [];
+        console.log('📱 Remote data received. Total entries:', sensorData.length);
+      }
+    } catch (e) {
+      console.warn('Malformed message from client, ignored.');
+    }
   });
+
+  ws.on('close', () => console.log('🪫 WebSocket client disconnected'));
 });
 
 function broadcastSensorData(data) {
@@ -86,7 +92,4 @@ function broadcastSensorData(data) {
   });
 }
 
-// Start the server
-server.listen(port, () => {
-  console.log(`🌎 http/ws & https express running at http://localhost:${port}`);
-});
+server.listen(httpPort, () => console.log(`🌎 HTTP/WebSocket server running at http://localhost:${httpPort}`));
