@@ -83,7 +83,7 @@ wss.on('connection', (ws) => {
       if (parsed && parsed.sensor !== undefined) {
         const entry = { sensor: parsed.sensor, timestamp: parsed.timestamp || Date.now() };
         sensorData.push(entry);
-        console.log('🎉 Remote Sensor Data:', sensorData.length, sensorData[sensorData.length - 1].sensor.toString());
+        console.log('🎉 Remote Sensor Data:', `${sensorData.length}🤸🏼`, '| gx: ', parsed.sensor.gx, '| gy: ', parsed.sensor.gy, '| gz: ', parsed.sensor.gz);
         broadcastSensorData(entry); // forward to dashboard clients
         // keep sensorData bounded
         if (sensorData.length > 1000) sensorData = [];
