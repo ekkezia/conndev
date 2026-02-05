@@ -176,9 +176,11 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
   console.log('🔌 Dashboard connected:', socket.id);
   socket.emit('sensor-initial-data', sensorData); // send latest data to client upon connection
-
+  socket.emit('user', { id: socket.id }); // send user ID
+  
   // on receiving realtime sensor data (sensor-realtime-send) from remote client
   socket.on('sensor-realtime-send', (data) => {
+    console.log('🚀 Received from REMOTE', data);
     if (!data?.sensor) return;
     
     const entry = { ...data, timestamp: data.timestamp || Date.now() };
