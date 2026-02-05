@@ -14,23 +14,31 @@ const tcpServer = net.createServer((socket) => {
   console.log('Arduino connected:', socket.remoteAddress + ':' + socket.remotePort);
 
   socket.on('data', (data) => {
-    try {
-      const parsed = JSON.parse(data.toString());
-      if (parsed && parsed.sensor !== undefined) {
-        const entry = {
-          sensor: parsed.sensor,
-          timestamp: parsed.timestamp || Date.now(),
-          source: 'arduino' // tag as Arduino
-        };
-        sensorData.push(entry);
-        broadcastSensorData(entry);
-        if (sensorData.length > 1000) sensorData = [];
-        console.log('📡 Arduino data received. Total entries:', sensorData.length);
-      }
-    } catch (e) {
-      console.error('Error parsing Arduino data:', e.message || e);
+  const str = data.toString().trim();
+  
+  // quick sanity check: JSON must start with { or [
+  if (!str.startsWith('{') && !str.startsWith('[')) {
+    console.warn('Non-JSON data received on Arduino TCP port:', str);
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(str);
+    if (parsed && parsed.sensor !== undefined) {
+      const entry = {
+        sensor: parsed.sensor,
+        timestamp: parsed.timestamp || Date.now(),
+        source: 'arduino'
+      };
+      sensorData.push(entry);
+      broadcastSensorData(entry);
+      if (sensorData.length > 1000) sensorData = [];
     }
-  });
+  } catch (e) {
+    console.error('Error parsing Arduino data:', e.message);
+  }
+});
+
 
   socket.on('end', () => console.log('Arduino disconnected:', socket.remoteAddress));
   socket.on('error', (err) => console.error('Arduino socket error:', err));
