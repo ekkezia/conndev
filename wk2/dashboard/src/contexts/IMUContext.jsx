@@ -1,9 +1,9 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useEffect } from 'react';
+import { io } from 'socket.io-client';
+import { SERVER_URL } from '../config';
 
 const IMUContext = createContext(null);
-
-const SERVER_URL = 'ws://localhost:4000';
 
 export function IMUProvider({ children }) {
   const [connected, setConnected] = useState(false);
@@ -12,38 +12,23 @@ export function IMUProvider({ children }) {
   const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null });
 
   const updateSensor = useCallback((newSensor) => {
-    setSensorData((s) => ({ ...s, ...newSensor }));
+    setSensorData((s) => [...s.slice(-999), newSensor]);
   }, []);
 
   const connect = useCallback(() => setConnected(true), []);
   const disconnect = useCallback(() => setConnected(false), []);
-
+  
   const [sensorData, setSensorData] = useState([]);
-  // periodically fetch the server for latest sensor data
+
+  const socket = useRef(null);
+
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:4000');
-    ws.onopen = () => {
-      console.log('WebSocket connected to server');
-    }
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data && data.sensor !== undefined) {
-          setSensorData((s) => [...s, data]);
-        }
-      } catch (e) {
-        console.error('Error parsing WebSocket message:', e);
-      }
-    }
-    ws.onclose = () => {
-      console.log('WebSocket disconnected from server');
-    }
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    }
-    return () => {
-      ws.close();
-    }
+    socket.current = io(SERVER_URL);
+
+    socket.current.on('sensor-initial-data', (data) => setSensorData(data));
+    socket.current.on('sensor-realtime-receive', (data) => setSensorData((prev) => [...prev, data].slice(-1000)));
+
+    return () => socket.current.disconnect();
   }, []);
 
   const value = {

@@ -1,82 +1,270 @@
-import { Canvas, useFrame, } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useIMU } from '../contexts/IMUContext';
 import * as THREE from 'three';
-import { useRef } from 'react';
+import { useRef, useEffect, useState } from 'react';
+import * as dat from 'dat.gui';
 
-const SMOOTH_SPEED = 8;
+const MAX_ANGLE = Math.PI / 4; // ±45°
+// ALPHA is a per-frame blend factor (0..1). We'll convert it to a
+// frame-rate independent interpolation factor using delta time.
+const ALPHA = 0.08;
 
-function SceneGrid({ size = 20, divisions = 20 }) {
-    const { sensorData, playbackMode, isPlayingBack, playbackStatus } = useIMU();
-    const groupRef = useRef();
-    const tempEuler = useRef(new THREE.Euler());
-    const tempQuat = useRef(new THREE.Quaternion());
+// ---------------- LIGHTING ----------------
+function Lighting({ lightRef, lightPos, targetRef }) {
+  const groupRef = useRef();
 
-    // for lerping
-  useFrame((_, delta) => {
-    const g = groupRef.current;
-    if (!g) return;
-
-    let latest, targetQuat;
-    if (playbackMode) {
-      // playback: use clippedTimestamp (persisted click) or fallback to currentTimestamp
-      const ts = playbackStatus?.clippedTimestamp ?? playbackStatus?.currentTimestamp ?? 0;
-      latest = sensorData || [];
-      let latestSensor = {};
-      for (let i = latest.length - 1; i >= 0; --i) {
-        const entry = latest[i];
-        if (!entry) continue;
-        if ((entry.timestamp ?? 0) <= ts) { latestSensor = entry.sensor || {}; break; }
-      }
-
-      const tx = (latestSensor.gx ?? 0) * Math.PI / 180;
-      const ty = (latestSensor.gy ?? 0) * Math.PI / 180;
-      const tz = (latestSensor.gz ?? 0) * Math.PI / 180;
-
-      tempEuler.current.set(tx, ty, tz, 'XYZ');
-      tempQuat.current.setFromEuler(tempEuler.current);
-      targetQuat = tempQuat.current;
-    } else {
-      // derive target Euler from sensor (degrees → radians)
-      latest = sensorData?.at(-1)?.sensor || {};
-      const tx = (latest.gx ?? 0) * Math.PI / 180; // todo: why?
-      const ty = (latest.gy ?? 0) * Math.PI / 180;
-      const tz = (latest.gz ?? 0) * Math.PI / 180;
-
-      targetQuat = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(tx, ty, tz, 'XYZ')
-      );
-
+  useEffect(() => {
+    if (lightRef.current && targetRef.current) {
+      lightRef.current.target = targetRef.current;
     }
-
-    // frame-rate independent interpolation factor
-    const alpha = 1 - Math.exp(-SMOOTH_SPEED * delta);
-
-    // slerp current quaternion toward target
-    g.quaternion.slerp(targetQuat, alpha);
-  });
+  }, [lightRef, targetRef]);
 
   return (
-    <group ref={groupRef}>
-      <spotLight position={[0, 0, 0]} intensity={1.2} angle={0.4} penumbra={0.5} castShadow />
-      <gridHelper args={[size, divisions, '#FFF', '#FFF']} rotation={[0, 0, 0]} />
-      <axesHelper args={[Math.min(size, 10)]} />
+    <group
+      ref={groupRef}
+      position={[lightPos.x, lightPos.y, lightPos.z]}
+      rotation={[Math.PI / 2, 0, 0]}
+    >
+      <spotLight
+        ref={lightRef}
+        intensity={40}
+        angle={0.8}
+        penumbra={0.5}
+        distance={50}
+        castShadow
+      />
+      <mesh position={[0, 2, 0]}>
+        <sphereGeometry args={[0.12, 12, 12]} />
+        <meshBasicMaterial color="#ffff66" />
+      </mesh>
     </group>
   );
 }
 
-export default function R3FCanvas() {
+// ---------------- PLANE CONTROLLER ----------------
+function PlaneController({
+  planeRef,
+  rotationDebugRef,
+  overrideRotation,
+  guiRotation
+}) {
+  const { sensorData, playbackMode, playbackStatus, setPlaybackStatus } = useIMU();
+
+  const anglesRef = useRef({ x: 0, y: 0, z: 0 });
+  const lastTimeRef = useRef(performance.now());
+  const playbackIndexRef = useRef(null);
+  const playbackAccumRef = useRef(0); // ms accumulator for 20ms steps
+
+  const tempEuler = useRef(new THREE.Euler());
+  const tempQuat = useRef(new THREE.Quaternion());
+
+  useFrame((state, delta) => {
+    const plane = planeRef.current;
+    if (!plane) return;
+
+    let targetQuat;
+
+    if (overrideRotation) {
+      tempEuler.current.set(
+        guiRotation.x,
+        guiRotation.y,
+        guiRotation.z,
+        'XYZ'
+      );
+      tempQuat.current.setFromEuler(tempEuler.current);
+      targetQuat = tempQuat.current;
+    } else if (playbackMode) {
+      // Play through filtered samples from the sample at-or-before currentTimestamp
+      // up to the end of the filtered range. Advance one sample every 20ms.
+      const clipTs = playbackStatus?.clippedTimestamp ?? Infinity;
+      const curTs = playbackStatus?.currentTimestamp ?? Infinity;
+
+      const filtered = (sensorData || []).filter(d => d.timestamp <= clipTs);
+      if (filtered.length === 0) return;
+
+      // find latest sample <= current timestamp
+      let startIdx = -1;
+      for (let i = filtered.length - 1; i >= 0; i--) {
+        if (filtered[i].timestamp <= curTs) {
+          startIdx = i;
+          break;
+        }
+      }
+      if (startIdx === -1) return;
+
+      // init playback index
+      if (
+        playbackIndexRef.current == null ||
+        playbackIndexRef.current < startIdx
+      ) {
+        playbackIndexRef.current = startIdx;
+        playbackAccumRef.current = 0;
+      }
+
+      // advance every 20ms
+      playbackAccumRef.current += delta * 1000;
+      while (
+        playbackAccumRef.current >= 20 &&
+        playbackIndexRef.current < filtered.length - 1
+      ) {
+        playbackIndexRef.current++;
+        playbackAccumRef.current -= 20;
+      }
+
+      const sample =
+        filtered[Math.min(playbackIndexRef.current, filtered.length - 1)]
+          ?.sensor || {};
+      // setPlaybackStatus((status) => ({
+      //   ...status,
+      //   currentTimestamp: playbackIndexRef.current,
+      // })); ???
+      console.log('playing sample w timestamp:', filtered[playbackIndexRef.current]?.timestamp);
+
+      // ⚠️ DO NOT integrate gyro here
+      // assume gx / gy are already angles OR pre-integrated offline
+
+      const xRad = THREE.MathUtils.clamp(
+        (sample.xDeg ?? 0) * THREE.MathUtils.DEG2RAD,
+        -MAX_ANGLE,
+        MAX_ANGLE
+      );
+
+      const yRad = THREE.MathUtils.clamp(
+        (sample.yDeg ?? 0) * THREE.MathUtils.DEG2RAD,
+        -MAX_ANGLE,
+        MAX_ANGLE
+      );
+
+      tempEuler.current.set(xRad, yRad, 0, 'XYZ');
+      tempQuat.current.setFromEuler(tempEuler.current);
+      targetQuat = tempQuat.current;
+
+    } else {
+      const latest = sensorData?.at(-1)?.sensor || {};
+
+      // treat raw gx/gy as angles (degrees) — convert to radians
+      // Euler expects radians
+      tempEuler.current.set(
+        THREE.MathUtils.degToRad(latest.gx || 0),
+        THREE.MathUtils.degToRad(latest.gy || 0),
+        THREE.MathUtils.degToRad(latest.gz || 0),
+        'XYZ'
+      );
+
+      // quat is unitless
+      tempQuat.current.setFromEuler(tempEuler.current);
+      targetQuat = tempQuat.current;
+    }
+
+    // convert ALPHA (per-frame) to a delta-time-independent factor
+    // t = 1 - (1 - ALPHA)^(delta * 60)
+    const t = 1 - Math.pow(1 - ALPHA, delta * 60);
+    plane.quaternion.slerp(targetQuat, t);
+
+    // -------- DEBUG EXPORT (NO PREPROCESSING) --------
+    if (rotationDebugRef.current) {
+      rotationDebugRef.current.eulerDeg = {
+        x: tempQuat.current.x * (180 / Math.PI),
+        y: tempQuat.current.y * (180 / Math.PI),
+        z: tempQuat.current.z * (180 / Math.PI),
+      };
+      rotationDebugRef.current.quat = {
+        x: tempQuat.current.x,
+        y: tempQuat.current.y,
+        z: tempQuat.current.z,
+        w: tempQuat.current.w,
+      };
+    }
+
+  });
+
+  return null;
+}
+
+// ---------------- DEBUG UI ----------------
+function RotationDebug({ rotationDebugRef }) {
+  const [, force] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => force(v => v + 1), 100);
+    return () => clearInterval(id);
+  }, []);
+
+  const d = rotationDebugRef.current;
+
   return (
-    <div className="fixed top-0 left-0 w-full h-full z-0 pointer-events-none">
-      <Canvas shadows camera={{ position: [0, 0, 12], fov: 50 }}>
-        <ambientLight intensity={0.6} />
-        <directionalLight position={[5, 10, 5]} intensity={1} />
-        <SceneGrid size={10} divisions={10} />
-        
-        <mesh position={[0, 0, 0]} castShadow receiveShadow>
-          <sphereGeometry args={[4, 64, 64]} />
-          <meshStandardMaterial color="#ffffff" metalness={0.2} roughness={0.6} />
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 12,
+        left: 12,
+        padding: '8px 10px',
+        fontFamily: 'monospace',
+        fontSize: 12,
+        whiteSpace: 'pre',
+        background: 'rgba(0,0,0,0.6)',
+        color: '#0f0',
+        zIndex: 9999,
+        pointerEvents: 'none',
+      }}
+    >
+{`Euler (deg)
+x: ${d.eulerDeg.x.toFixed(2)}
+y: ${d.eulerDeg.y.toFixed(2)}
+z: ${d.eulerDeg.z.toFixed(2)}
+
+Quaternion
+x: ${d.quat.x.toFixed(3)}
+y: ${d.quat.y.toFixed(3)}
+z: ${d.quat.z.toFixed(3)}
+w: ${d.quat.w.toFixed(3)}`}
+    </div>
+  );
+}
+
+// ---------------- MAIN CANVAS ----------------
+export default function R3FCanvas() {
+  const planeRef = useRef();
+  const lightRef = useRef();
+
+  const rotationDebugRef = useRef({
+    eulerDeg: { x: 0, y: 0, z: 0 },
+    quat: { x: 0, y: 0, z: 0, w: 1 },
+  });
+
+  const [cameraPos, setCameraPos] = useState({ x: 0, y: 0, z: 8 });
+  const [lightPos, setLightPos] = useState({ x: 0, y: 10, z: 10 });
+  const [overrideRotation, setOverrideRotation] = useState(false);
+  const [planeRotation, setPlaneRotation] = useState({ x: 0, y: 0, z: 0 });
+
+  return (
+    <div className="absolute inset-0">
+      <Canvas
+        shadows
+        camera={{ position: [cameraPos.x, cameraPos.y, cameraPos.z] }}
+      >
+        <ambientLight intensity={0.05} />
+
+        <Lighting
+          lightRef={lightRef}
+          lightPos={lightPos}
+          targetRef={planeRef}
+        />
+
+        <mesh ref={planeRef} castShadow receiveShadow>
+          <planeGeometry args={[120, 96, 64, 64]} />
+          <meshStandardMaterial color="white" />
         </mesh>
+
+        <PlaneController
+          planeRef={planeRef}
+          rotationDebugRef={rotationDebugRef}
+          overrideRotation={overrideRotation}
+          guiRotation={planeRotation}
+        />
       </Canvas>
+
+      <RotationDebug rotationDebugRef={rotationDebugRef} />
     </div>
   );
 }

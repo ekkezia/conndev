@@ -48,10 +48,12 @@ export default function PlaybackDisplay({ className}) {
             }}>
                 
                 <div 
-                className="absolute top-0 left-0 h-full bg-red-500/90" 
+                className="absolute top-0 left-0 h-full bg-red-500/90 flex items-end justify-center text-xs font-mono" 
                 style={{ 
                     width: `${progressSensorData * 100}%`, 
+                    color: 'white'
                     }}>
+                        {playbackStatus.currentTimestamp.toFixed(0)}ms
                 </div>
                 <div className="absolute top-0 left-0 text-white">
                     {/* {progressSensorData}ms */}

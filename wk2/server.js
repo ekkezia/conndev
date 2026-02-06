@@ -1,115 +1,8 @@
 // // responds to Arduino requests & responses (via TCP)
-// const net = require('net');
-// const { WebSocketServer } = require('ws');
+const net = require('net');
 
-// const tcpPort = 3000;
+const tcpPort = 3000;
 
-// let sensorData = [];
-
-// const tcpServer = net.createServer((socket) => {
-//   console.log('Arduino connected:', socket.remoteAddress + ':' + socket.remotePort);
-
-//   socket.on('data', (data) => {
-//     try {
-//       const parsed = JSON.parse(data.toString());
-//     //   console.log('Received data from Arduino:', parsed);
-//       if (parsed && parsed.sensor !== undefined) {
-//         sensorData.push({ sensor: parsed.sensor, timestamp: parsed.timestamp || null });
-//         // broadcast to WebSocket clients
-//         broadcastSensorData({ sensor: parsed.sensor, timestamp: parsed.timestamp });
-//         console.log('Received sensor data from Arduino:', sensorData.length);
-//       }
-
-//       // maybe purge sensorData if it reaches 1000 entry to offload the server
-//         if (sensorData.length > 1000) sensorData = [];
-//     } catch (e) {
-//     //   console.error('Error parsing data from Arduino:', e.message || e);
-//     }
-//   });
-
-//   socket.on('end', () => {
-//     console.log('Arduino disconnected:', socket.remoteAddress + ':' + socket.remotePort);
-//   });
-
-//   socket.on('error', (err) => {
-//     console.error('Socket error:', err);
-//   });
-// });
-
-// tcpServer.listen(tcpPort, () => {
-//   console.log(`🛜 TCP server for Arduino running at port ${tcpPort}`);
-// });
-
-// // --- BROWSER DASHBOARD SERVER ---
-// // only responds to HTTP requests (browser), not Arduino
-// // to serve historical data via REST API to browser client
-// const express = require('express'); // useful for HTTPS 
-// const http = require('http');
-// const cors = require('cors');
-
-// const app = express();
-// const port = 4000;
-
-// // enable CORS (development)
-// app.use(cors());
-
-// app.get('/', (req, res) => {
-//   res.send({ status: 'ok', message: 'Hello!' });
-// });
-
-// // --- (Optional) Get latest sensor data(s) (historical) ---
-// app.get('/sensor-data', (req, res) => {
-//   res.json(sensorData);
-//   console.log('🍟 Latest sensor data(s) to client:', sensorData.length);
-// });
-
-// // --- WEBSOCKET DASHBOARD SERVER ---
-// // for realtime purposes
-// const server = http.createServer(app);
-// const wss = new WebSocketServer({ server }); // attach HTTP server
-
-// wss.on('connection', (ws) => {
-//   console.log('🔌 Dashboard connected via WebSocket');
-//   ws.send(JSON.stringify(sensorData)); // send latest data upon client connection // todo only send to dashboard
-
-//   ws.on('close', () => {
-//     console.log('🪫 Dashboard disconnected');
-//   });
-
-//   // handle remote's messages
-//   ws.on('message', (message) => {
-//     try {
-//       const parsed = JSON.parse(message.toString());
-//       if (parsed && parsed.sensor !== undefined) {
-//         const entry = { sensor: parsed.sensor, timestamp: parsed.timestamp || Date.now() };
-//         sensorData.push(entry);
-//         console.log('🎉 Remote Sensor Data:', `${sensorData.length}🤸🏼`, '| gx: ', parsed.sensor.gx, '| gy: ', parsed.sensor.gy, '| gz: ', parsed.sensor.gz);
-//         broadcastSensorData(entry); // forward to dashboard clients
-//         // keep sensorData bounded
-//         if (sensorData.length > 1000) sensorData = [];
-//       }
-//     } catch (e) {
-//       // ignore malformed messages
-//     }
-//   });
-
-// });
-
-// function broadcastSensorData(data) {
-//   const message = JSON.stringify(data);
-//   wss.clients.forEach((client) => {
-//     if (client.readyState === client.OPEN) {
-//       client.send(message);
-//     }
-//   });
-// }
-
-// // Start the server
-// server.listen(port, () => {
-//   console.log(`🌎 http/ws & https express running at http://localhost:${port}`);
-// });
-
-// --- SOCKET IO ---
 // server.js
 const express = require('express');
 const http = require('http');
@@ -145,32 +38,72 @@ const io = new Server(server, {
   },
 });
 
-// // --- Socket.IO namespace for ARDUINO (Optional) ---
-// const arduinoNS = io.of('/arduino');
+// --- TCP server for Arduino (forward parsed sensor data to socket.io) ---
+const tcpServer = net.createServer((socket) => {
+  console.log('Arduino connected (TCP):', socket.remoteAddress + ':' + socket.remotePort);
 
-// arduinoNS.on('connection', (socket) => {
-//   console.log('🛠 Arduino connected:', socket.id);
+  // Buffer incoming data to handle partial/multiple JSON objects per TCP chunk.
+  socket._buffer = '';
+  socket.on('data', (data) => {
+    try {
+      socket._buffer += data.toString();
+      let buf = socket._buffer;
 
-//   // Arduino sends sensor data
-//   socket.on('sensor-data', (data) => {
-//     if (!data?.sensor) return;
+      // scan for balanced JSON objects starting at '{'
+      let start = buf.indexOf('{');
+      while (start !== -1) {
+        let depth = 0;
+        let end = -1;
+        for (let i = start; i < buf.length; i++) {
+          const ch = buf[i];
+          if (ch === '{') depth++;
+          else if (ch === '}') depth--;
+          if (depth === 0) { end = i; break; }
+        }
 
-//     const entry = { ...data, timestamp: data.timestamp || Date.now() };
-//     sensorData.push(entry);
+        if (end === -1) {
+          // incomplete JSON, wait for more data
+          break;
+        }
 
-//     // keep last 1000 entries
-//     if (sensorData.length > 1000) sensorData.shift();
+        const piece = buf.slice(start, end + 1);
+        buf = buf.slice(end + 1);
 
-//     // broadcast to all dashboard clients
-//     io.of('/dashboard').emit('sensor-update', entry);
+        try {
+          const parsed = JSON.parse(piece);
+          if (parsed && parsed.sensor !== undefined) {
+            const entry = { sensor: parsed.sensor, timestamp: parsed.timestamp || Date.now() };
+            sensorData.push(entry);
+            if (sensorData.length > 1000) sensorData.shift();
+            io.emit('sensor-realtime-receive', entry);
+            console.log('Received sensor data from Arduino (TCP):', sensorData.slice(-1));
+          }
+        } catch (e) {
+          console.warn('Malformed JSON from Arduino TCP, skipping piece:', e.message || e);
+        }
 
-//     console.log('📡 Sensor data received:', entry);
-//   });
+        start = buf.indexOf('{');
+      }
 
-//   socket.on('disconnect', () => {
-//     console.log('🛠 Arduino disconnected:', socket.id);
-//   });
-// });
+      socket._buffer = buf;
+    } catch (e) {
+      console.error('Error processing TCP payload from Arduino:', e.message || e);
+    }
+  });
+
+  socket.on('end', () => {
+    console.log('Arduino (TCP) disconnected:', socket.remoteAddress + ':' + socket.remotePort);
+  });
+
+  socket.on('error', (err) => {
+    console.error('Arduino (TCP) socket error:', err);
+  });
+});
+
+tcpServer.listen(tcpPort, () => {
+  console.log(`🛜 TCP server for Arduino running at port ${tcpPort}`);
+});
+
 
 // --- Socket.IO namespace for DASHBOARD / REMOTE ---
 io.on('connection', (socket) => {
@@ -178,6 +111,8 @@ io.on('connection', (socket) => {
   socket.emit('sensor-initial-data', sensorData); // send latest data to client upon connection
   socket.emit('user', { id: socket.id }); // send user ID
   
+  // [CASE] Receiving from mobile phone or Arduino
+  // Note: Switch to Render host if using mobile phone because local network can't access gyro/accel
   // on receiving realtime sensor data (sensor-realtime-send) from remote client
   socket.on('sensor-realtime-send', (data) => {
     console.log('🚀 Received from REMOTE', data);
