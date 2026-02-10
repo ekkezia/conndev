@@ -24,7 +24,8 @@ export default function DashboardDisplay({ className}) {
                     if (raw === undefined || raw === null) return <div key={idx} className="w-2 h-2 transparent" />;
                     const mappedSensor = kind === 'gyro'
                         ? mapValue(raw, -180, 180, -50, 50)
-                        : mapValue(raw, -2, 2, -50, 50);
+                        : kind === 'accel' ? mapValue(raw, -2, 2, -50, 50) : 
+                        kind === 'magneto' ? mapValue(raw, 0, 360, -50, 50) : 0;
                     return (
                         <div
                             key={`${timestamp}-${idx}`}
@@ -66,27 +67,34 @@ export default function DashboardDisplay({ className}) {
                 <div ref={containerRef} className="relative w-full h-full relative overflow-x-scroll overflow-y-hidden">
                     {/* left axis showing measurement range -180..180 */}
                     <div className="sticky h-[30vh] left-0 top-0 bottom-0 w-14 flex flex-col items-center justify-between text-white text-xs opacity-80 pointer-events-none z-40">
-                        <div className="mt-2">180</div>
+                        <div className="mt-2">{mode === 'gyro' ? 180 : mode === 'accel' ? 180 : mode === 'mag' ? 0 : ''}</div>
                         <div className="">0</div>
-                        <div className="mb-2">-180</div>
+                        <div className="mb-2">{mode === 'gyro' ? -180 : mode === 'accel' ? -180 : mode === 'mag' ? 360 : ''}</div>
                         <div className="absolute right-0 top-0 bottom-0 w-px bg-white/30" />
                     </div>
                     <div className="flex items-start gap-2 mb-2 absolute left-20 top-2 z-50">
                         <button onClick={() => setMode('gyro')} className={clsx('px-2 py-1 rounded', mode === 'gyro' ? 'bg-white text-black' : 'bg-black/40 text-white')}>Gyro</button>
                         <button onClick={() => setMode('accel')} className={clsx('px-2 py-1 rounded', mode === 'accel' ? 'bg-white text-black' : 'bg-black/40 text-white')}>Accel</button>
+                        <button onClick={() => setMode('mag')} className={clsx('px-2 py-1 rounded', mode === 'mag' ? 'bg-white text-black' : 'bg-black/40 text-white')}>Mag</button>
                     </div>
 
-                    {mode === 'gyro' ? (
+                    {mode === 'gyro' && (
                         <>
                             <SensorGraph keyName="gx" color="bg-red-500/50" kind="gyro" />
                             <SensorGraph keyName="gy" color="bg-green-500/50" kind="gyro" />
                             <SensorGraph keyName="gz" color="bg-blue-500/50" kind="gyro" />
                         </>
-                    ) : (
+                    ) }
+                    {(mode === 'accel') && (
                         <>
                             <SensorGraph keyName="ax" color="bg-red-500/50" kind="accel" />
                             <SensorGraph keyName="ay" color="bg-green-500/50" kind="accel" />
                             <SensorGraph keyName="az" color="bg-blue-500/50" kind="accel" />
+                        </>
+                    )}
+                    {(mode === 'magneto') && (
+                        <>
+                            <SensorGraph keyName="heading" color="bg-red-500/50" kind="magneto" />
                         </>
                     )}
 
@@ -99,9 +107,11 @@ export default function DashboardDisplay({ className}) {
                                 <span className="font-mono">[{new Date(data.timestamp).toLocaleTimeString()}]</span>{' '}
                                 {mode === 'gyro' ? (
                                     <span className="font-mono">Gyro: (X: {s.gx?.toFixed(2) || 'N/A'}, Y: {s.gy?.toFixed(2) || 'N/A'}, Z: {s.gz?.toFixed(2) || 'N/A'})</span>
-                                ) : (
+                                ) : (mode === 'accel') ? (
                                     <span className="font-mono">Accel: (X: {s.ax?.toFixed(2) || 'N/A'}, Y: {s.ay?.toFixed(2) || 'N/A'}, Z: {s.az?.toFixed(2) || 'N/A'})</span>
-                                )}
+                                ) : (mode === 'magneto') ? (
+                                    <span className="font-mono">Magneto: Heading: {s.heading?.toFixed(2) || 'N/A'}</span>
+                                ) : null}
                             </div>
                         );
                     })}

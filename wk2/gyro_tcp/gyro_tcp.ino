@@ -1,9 +1,13 @@
 #include <Arduino_LSM6DS3.h>
+#include <Adafruit_LSM303_U.h>
+#include <Adafruit_Sensor.h>
 #include <MadgwickAHRS.h>
 #include <WiFiNINA.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include "arduino_secrets.h"
+#include <Wire.h>
+
 
 // --- Madgwick filter ---
 Madgwick filter;
@@ -19,26 +23,23 @@ const int portNum = 3000;
 const String deviceName = "kezia";
 
 // --- Timing ---
-const int sendInterval = 20;  // 20ms → ~50Hz
+const int sendInterval = 50;  // 20ms → ~50Hz
 unsigned long lastSend = 0;
 unsigned long lastNTPUpdate = 0;
 
 // --- IMU readings ---
 float ax, ay, az;
 float gx, gy, gz;
-float roll, pitch, yaw;
+// --- Magnetometer from LSM303 ---
+Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(12345);
+
+// Gyro Thresholds
+int minThresh = 30;
+int maxThresh = 500;
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   while (!Serial) {}
-
-  // IMU init
-  if (!IMU.begin()) {
-    Serial.println("Failed to initialize IMU!");
-    while (1);
-  }
-
-  filter.begin(50); // Madgwick filter at 50Hz
 
   // Connect WiFi
   WiFi.begin(SECRET_SSID, SECRET_PASS);
@@ -49,65 +50,91 @@ void setup() {
   }
   Serial.println("\nWiFi connected");
 
+  // IMU init
+  if (!IMU.begin()) {
+    Serial.println("Failed to initialize IMU!");
+    while (1);
+  }
+  // magnetometer begin
+  if (!mag.begin()) {
+    Serial.println("LSM303 magnetometer not found");
+    while (1);
+  }
+  mag.enableAutoRange(true);
+
+  filter.begin(50); // Madgwick filter at 50Hz
+
+  Wire.begin();
+  Wire.setTimeout(10);   
+
   // NTP
   timeClient.begin();
   timeClient.update();
 }
 
 void loop() {
+  if (!client.connected()) {
+    if (client.connect(serverIP, portNum)) {
+      Serial.println("Connected to Server");
+    } else {
+      delay(1000);
+      return; 
+    }
+  }
+
   unsigned long now = millis();
 
-  // --- Update NTP every second ---
-  if (now - lastNTPUpdate >= 1000) {
+  // Update NTP
+  if (now - lastNTPUpdate >= 60000) {   // once per minute
     timeClient.update();
     lastNTPUpdate = now;
   }
 
-  // --- Send IMU data at ~50Hz ---
+  // Send IMU data at ~50Hz
   if (now - lastSend >= sendInterval) {
     lastSend = now;
 
-    if (IMU.accelerationAvailable() && IMU.gyroscopeAvailable()) {
-      // read IMU
+    // 1. Get Magnetometer Data
+    sensors_event_t event;
+    mag.getEvent(&event);
+    float heading = atan2(event.magnetic.y, event.magnetic.x) * 180 / M_PI;
+    if (heading < 0) heading += 360;
+
+    // 2. Get Gyroscope Data
+    if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable()) {
       IMU.readAcceleration(ax, ay, az);
-      IMU.readGyroscope(gx, gy, gz); // degrees/sec
-
-      // Madgwick filter expects radians/sec for gyro
-      filter.updateIMU(gx * DEG_TO_RAD, gy * DEG_TO_RAD, gz * DEG_TO_RAD, ax, ay, az);
-
-      // Euler angles (radians)
-      roll = filter.getRoll();
-      pitch = filter.getPitch();
-      yaw = filter.getYaw();
-      if (yaw < 0) yaw += 2 * PI; // wrap 0–2PI
-
-      // --- Ensure TCP is connected ---
-      if (!client.connected()) {
-        client.stop();
-        if (!client.connect(serverIP, portNum)) {
-          Serial.println("Failed to connect to server. Will retry...");
-          return; // skip sending this iteration
-        }
-      }
-
-      // --- Build JSON message ---
-      String message = "{\"device\":\"" + deviceName + "\",\"sensor\":{";
-      message += "\"ax\":" + String(ax) + ",";
-      message += "\"ay\":" + String(ay) + ",";
-      message += "\"az\":" + String(az) + ",";
-      message += "\"gx\":" + String(gx) + ",";
-      message += "\"gy\":" + String(gy) + ",";
-      message += "\"gz\":" + String(gz) + ",";
-      message += "\"roll\":" + String(roll) + ",";
-      message += "\"pitch\":" + String(pitch) + ",";
-      message += "\"yaw\":" + String(yaw);
-      message += "},\"timestamp\":" + String(timeClient.getEpochTime()) + "}";
-
-      // send
-      client.println(message);
-
-      // debug
-      Serial.println(message);
+      IMU.readGyroscope(gx, gy, gz);
     }
-  }
-}
+
+    // 3. Calculate Intensities
+    int speedY = 0;
+    int speedX = 0;
+    if (abs(gy) > minThresh)
+      speedY = map(constrain(abs(gy), minThresh, maxThresh), minThresh, maxThresh, 0, 100);
+    if (abs(gx) > minThresh)
+      speedX = map(constrain(abs(gx), minThresh, maxThresh), minThresh, maxThresh, 0, 100);
+
+    // 4. Determine Direction
+    // String dir = "FRONT";
+    // if (heading >= 45 && heading < 135) dir = "RIGHT";
+    // else if (heading >= 135 && heading < 225) dir = "BACK";
+    // else if (heading >= 225 && heading < 315) dir = "LEFT";
+
+    // 5. Build JSON
+    String message = "{\"device\":\"" + deviceName + "\",\"sensor\":{";
+    message += "\"ax\":" + String(ax) + ",";
+    message += "\"ay\":" + String(ay) + ",";
+    message += "\"az\":" + String(az) + ",";
+    message += "\"gx\":" + String(gx) + ",";
+    message += "\"gy\":" + String(gy) + ",";
+    message += "\"gz\":" + String(gz) + ",";
+    // message += "\"dir\":\"" + dir + "\",";
+    message += "\"heading\":" + String('0');
+    // message += "\"speedX\":" + String(speedX) + ",";
+    // message += "\"speedY\":" + String(speedY);
+    message += "},\"timestamp\":" + String(timeClient.getEpochTime()) + "}";
+
+    client.println(message);
+    Serial.println(message);
+  } 
+} 

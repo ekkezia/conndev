@@ -6,9 +6,12 @@ export default function DrawingDisplay({ className }) {
   const canvasRef = useRef(null);
   const pathRef = useRef(null);
   const positionRef = useRef(null);
+  const previousPosRef = useRef(null);
   const velocityRef = useRef({ x: 0, y: 0 });
 
   const { sensorData } = useIMU();
+
+  const [drawState, setDrawState] = useState(false); 
 
   // ---- DEBUG STATE ----
   const [debug, setDebug] = useState({
@@ -29,6 +32,13 @@ export default function DrawingDisplay({ className }) {
 
     paper.setup(canvas);
 
+    const { width, height } = canvas.getBoundingClientRect();
+    if (width && height) {
+      canvas.width = width;
+      canvas.height = height;
+      paper.view.viewSize = new paper.Size(width, height);
+    }
+
     // start at center
     positionRef.current = new paper.Point(
       paper.view.size.width / 2,
@@ -36,16 +46,10 @@ export default function DrawingDisplay({ className }) {
     );
 
     velocityRef.current = { x: 0, y: 0 };
-
-    pathRef.current = new paper.Path({
-      strokeColor: "red",      // FORCE visibility
-      strokeWidth: 4,
-      strokeCap: "round",
-      strokeJoin: "round"
-    });
-
-    // first point
-    pathRef.current.add(positionRef.current.clone());
+    previousPosRef.current = new paper.Point(
+      paper.view.size.width / 2,
+      paper.view.size.height / 2
+    );
 
     paper.view.draw();
 
@@ -56,91 +60,80 @@ export default function DrawingDisplay({ className }) {
 
   // ---------- UPDATE FROM IMU ----------
   useEffect(() => {
-  if (!sensorData || !pathRef.current || !positionRef.current) return;
+  if (!sensorData || !positionRef.current) return;
 
   const s = sensorData[sensorData.length - 1];
+  // console.log('sensor data:', s, sensorData.length);
   if (!s?.sensor) return;
 
-  const { ax = 0, ay = 0, az = 0 } = s.sensor;
+  const { ax = 0, ay = 0, az = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;
+
+  // activate the paint brush by flicking the device (detect via gy)
+  if (Math.abs(gx) > 80 || Math.abs(gy) > 80) {
+    // mark as ready to draw
+    setDrawState(true);
+  } else {
+    // set a timeout of 2s, if device stays stable, set drawing state to false
+    setTimeout(() => {
+      if (ax < 0.2 && ay < 0.2) setDrawState(false);
+    }, 2000);
+  }
+
+  if (!drawState) return; 
 
   const pos = positionRef.current;
   const vel = velocityRef.current;
 
   // ---- tuning ----
-  const accelToVel = 8;
-  const friction = 0.9;
   const strokeScale = 4;
-  const deadzone = 0.05;
-  const centerForce = 0.002;
 
-  // deadzone (kills gravity drift)
-  const ayEff = Math.abs(ay) < deadzone ? 0 : ay;
-  const azEff = Math.abs(az - 1) < deadzone ? 0 : az - 1; // normalize az by 1 
+  // const speed = Math.sqrt(speedX * speedX + speedY * speedY);
+  const radians = (heading * Math.PI) / 180;
+  
+  // Store previous position before updating
+  const prevPos = previousPosRef.current ? previousPosRef.current.clone() : pos.clone();
+  
+  pos.x += Math.cos(radians) * 1;
+  pos.y += Math.sin(radians) * 1;
 
-  // accel → velocity
-  vel.x += ayEff * accelToVel;
-  vel.y += azEff * -1 * accelToVel;// opposite dir
+  // clamp position to stay within canvas bounds
+  pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
+  pos.y = Math.max(0, Math.min(pos.y, paper.view.size.height));
 
-  // gentle pull back to center
-  vel.x += (paper.view.size.width / 2 - pos.x) * centerForce;
-  vel.y += (paper.view.size.height / 2 - pos.y) * centerForce;
+  // stroke width from magnitude of ax & ay (pressure)
+  const magAxAy = Math.sqrt(ax * ax + ay * ay);
+  const strokeWidth = Math.max(1, magAxAy * strokeScale);
 
-  // friction
-  vel.x *= friction;
-  vel.y *= friction;
-
-  // velocity → position
-  pos.x += vel.x;
-  pos.y += vel.y;
-
-  // if out of bounds → restart from center
-  const out =
-    pos.x <= 0 ||
-    pos.x >= paper.view.size.width ||
-    pos.y <= 0 ||
-    pos.y >= paper.view.size.height;
-
-  if (out) {
-    pathRef.current.remove();
-
-    pathRef.current = new paper.Path({
-      strokeColor: "red",
-      strokeWidth: 4,
-      strokeCap: "round",
-      strokeJoin: "round"
-    });
-
-    pos.x = paper.view.size.width / 2;
-    pos.y = paper.view.size.height / 2;
-    vel.x = 0;
-    vel.y = 0;
-
-    pathRef.current.add(pos.clone());
-    paper.view.draw();
-    return;
-  }
-
-  // stroke width from ax (pressure)
-  pathRef.current.strokeWidth = Math.max(
-    1,
-    Math.abs(ax) * strokeScale
-  );
-
-  pathRef.current.add(pos.clone());
+  // Create a new segment path with its own stroke width
+  const segmentPath = new paper.Path({
+    strokeColor: "red",
+    strokeWidth: strokeWidth,
+    strokeCap: "round",
+    strokeJoin: "round"
+  });
+  segmentPath.add(prevPos);
+  segmentPath.add(pos.clone());
+  
+  // Update previous position for next iteration
+  previousPosRef.current = pos.clone();
 
   setDebug({
-    points: pathRef.current.segments.length,
+    points: 0, // segment-based paths don't have a single point count
     x: pos.x.toFixed(1),
     y: pos.y.toFixed(1),
     vx: vel.x.toFixed(2),
     vy: vel.y.toFixed(2),
+    magAxAy: Math.sqrt(ax * ax + ay * ay).toFixed(2),
+    gx: gx.toFixed(2),
+    gy: gy.toFixed(2),
     ax: ax.toFixed(2),
     ay: ay.toFixed(2),
-    az: az.toFixed(2)
+    az: az.toFixed(2),
+    heading: heading.toFixed(2),
   });
 
   paper.view.draw();
-}, [sensorData]);
+}, [sensorData, drawState]);
 
 
   return (
@@ -168,7 +161,9 @@ export default function DrawingDisplay({ className }) {
         pts: {debug.points} | 
         x:{debug.x} y:{debug.y} | 
         vx:{debug.vx} vy:{debug.vy} | 
-        ax:{debug.ax} ay:{debug.ay} az:{debug.az}
+        gx: {debug.gx} gy:{debug.gy} |
+        ax:{debug.ax} ay:{debug.ay} | magAxAy:{debug.magAxAy} |
+        heading:{debug.heading}
       </div>
 
       <canvas
