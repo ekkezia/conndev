@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import paper from "paper";
 import { useIMU } from "../contexts/IMUContext";
 
+const unit = 25;
+
 export default function DrawingDisplay({ className }) {
   const canvasRef = useRef(null);
   const pathRef = useRef(null);
@@ -53,6 +55,135 @@ export default function DrawingDisplay({ className }) {
 
     paper.view.draw();
 
+    // ----- DRAW GRID -----
+const gridGroup = new paper.Group();
+gridGroup.sendToBack();
+
+const spacing = unit;
+const viewWidth = paper.view.size.width;
+const viewHeight = paper.view.size.height;
+
+for (let x = 0; x <= viewWidth; x += spacing) {
+  const vLine = new paper.Path.Line({
+    from: [x, 0],
+    to: [x, viewHeight],
+    strokeColor: new paper.Color(1, 1, 1, 0.15),
+    strokeWidth: 1
+  });
+  gridGroup.addChild(vLine);
+}
+
+for (let y = 0; y <= viewHeight; y += spacing) {
+  const hLine = new paper.Path.Line({
+    from: [0, y],
+    to: [viewWidth, y],
+    strokeColor: new paper.Color(1, 1, 1, 0.15),
+    strokeWidth: 1
+  });
+  gridGroup.addChild(hLine);
+}
+
+    // ----- CENTER LABEL -----
+    const rawCenter = paper.view.center;
+    const center = new paper.Point(
+      Math.round(rawCenter.x / unit) * unit,
+      Math.round(rawCenter.y / unit) * unit
+    );
+
+    // Draw main axes
+    const xAxis = new paper.Path.Line({
+      from: [0, center.y],
+      to: [viewWidth, center.y],
+      strokeColor: "red",
+      strokeWidth: 1
+    });
+
+    const yAxis = new paper.Path.Line({
+      from: [center.x, 0],
+      to: [center.x, viewHeight],
+      strokeColor: "green",
+      strokeWidth: 1
+    });
+
+    // ---- Numbering ----
+
+    // X axis numbers
+    let xIndex = 0;
+    for (let x = center.x; x <= viewWidth; x += spacing) {
+      const value = xIndex;
+
+      new paper.PointText({
+        point: [x, center.y + 15],
+        content: value.toString(),
+        fillColor: "white",
+        fontSize: 10,
+        justification: "center"
+      });
+
+      xIndex++;
+    }
+
+    xIndex = -1;
+    for (let x = center.x - spacing; x >= 0; x -= spacing) {
+      new paper.PointText({
+        point: [x, center.y + 15],
+        content: xIndex.toString(),
+        fillColor: "white",
+        fontSize: 10,
+        justification: "center"
+      });
+
+      xIndex--;
+    }
+
+
+    // Y axis numbers
+    let yIndex = 0;
+    for (let y = center.y; y >= 0; y -= spacing) {
+      new paper.PointText({
+        point: [center.x + 4, y + 4],
+        content: yIndex.toString(),
+        fillColor: "white",
+        fontSize: 10,
+        justification: "left"
+      });
+
+      yIndex++;
+    }
+
+    yIndex = -1;
+    for (let y = center.y + spacing; y <= viewHeight; y += spacing) {
+      new paper.PointText({
+        point: [center.x + 4, y + 4],
+        content: yIndex.toString(),
+        fillColor: "white",
+        fontSize: 10,
+        justification: "left"
+      });
+
+      yIndex--;
+    }
+
+
+    // ---- Big X and Y labels ----
+
+    new paper.PointText({
+      point: [viewWidth - 20, center.y - 10],
+      content: "X",
+      fillColor: "white",
+      fontSize: 16,
+      fontWeight: "bold"
+    });
+
+    new paper.PointText({
+      point: [center.x + 10, 20],
+      content: "Y",
+      fillColor: "white",
+      fontSize: 16,
+      fontWeight: "bold"
+    });
+
+
     return () => {
       paper.project.clear();
     };
@@ -85,16 +216,17 @@ export default function DrawingDisplay({ className }) {
   const vel = velocityRef.current;
 
   // ---- tuning ----
-  const strokeScale = 4;
+  const strokeScale = 1;
 
   // const speed = Math.sqrt(speedX * speedX + speedY * speedY);
-  const radians = (heading * Math.PI) / 180;
+  const radians = (heading * Math.PI) / 180; // direction
   
   // Store previous position before updating
   const prevPos = previousPosRef.current ? previousPosRef.current.clone() : pos.clone();
   
-  pos.x += Math.cos(radians) * 1;
-  pos.y += Math.sin(radians) * 1;
+  // scalar
+  pos.x += Math.cos(radians) * unit * -1;
+  pos.y += Math.sin(radians) * unit * -1;
 
   // clamp position to stay within canvas bounds
   pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
@@ -102,11 +234,11 @@ export default function DrawingDisplay({ className }) {
 
   // stroke width from magnitude of ax & ay (pressure)
   const magAxAy = Math.sqrt(ax * ax + ay * ay);
-  const strokeWidth = Math.max(1, magAxAy * strokeScale);
+  const strokeWidth = Math.max(0.1, magAxAy * strokeScale);
 
   // Create a new segment path with its own stroke width
   const segmentPath = new paper.Path({
-    strokeColor: "red",
+    strokeColor: "black",
     strokeWidth: strokeWidth,
     strokeCap: "round",
     strokeJoin: "round"

@@ -123,19 +123,20 @@ function PlaneController({
       // ⚠️ DO NOT integrate gyro here
       // assume gx / gy are already angles OR pre-integrated offline
 
-      const xRad = THREE.MathUtils.clamp(
-        (sample.xDeg ?? 0) * THREE.MathUtils.DEG2RAD,
-        -MAX_ANGLE,
-        MAX_ANGLE
-      );
+      const alpha = 0.98; // 0.95-0.99 (higher = trust gyro more, less = trust accel more)
+      const accelRoll = Math.atan2(sample.ay, Math.sqrt(sample.ax * sample.ax + sample.az * sample.az)) * (180 / Math.PI);
+      const accelPitch = Math.atan2(-sample.ax, Math.sqrt(sample.ay * sample.ay + sample.az * sample.az)) * (180 / Math.PI);
 
-      const yRad = THREE.MathUtils.clamp(
-        (sample.yDeg ?? 0) * THREE.MathUtils.DEG2RAD,
-        -MAX_ANGLE,
-        MAX_ANGLE
-      );
+      const x = THREE.MathUtils.clamp(sample.gx * alpha + accelRoll * (1 - alpha), -MAX_ANGLE, MAX_ANGLE);
+      const y = THREE.MathUtils.clamp(sample.gy * alpha + accelPitch * (1 - alpha), -MAX_ANGLE, MAX_ANGLE);
+      const z = sample.heading; // heading from compass/magnetometer calculation
 
-      tempEuler.current.set(xRad, yRad, 0, 'XYZ');
+      tempEuler.current.set(
+        THREE.MathUtils.degToRad(x || 0),
+        THREE.MathUtils.degToRad(y || 0),
+        THREE.MathUtils.degToRad(z || 0),
+        'XYZ'
+      );
       tempQuat.current.setFromEuler(tempEuler.current);
       targetQuat = tempQuat.current;
 
@@ -144,10 +145,18 @@ function PlaneController({
 
       // treat raw gx/gy as angles (degrees) — convert to radians
       // Euler expects radians
+      const alpha = 0.98; // 0.95-0.99 (higher = trust gyro more, less = trust accel more)
+      const accelRoll = Math.atan2(latest.ay, Math.sqrt(latest.ax * latest.ax + latest.az * latest.az)) * (180 / Math.PI);
+      const accelPitch = Math.atan2(-latest.ax, Math.sqrt(latest.ay * latest.ay + latest.az * latest.az)) * (180 / Math.PI);
+
+      const x = THREE.MathUtils.clamp(latest.gx * alpha + accelRoll * (1 - alpha), -MAX_ANGLE, MAX_ANGLE);
+      const y = THREE.MathUtils.clamp(latest.gy * alpha + accelPitch * (1 - alpha), -MAX_ANGLE, MAX_ANGLE);
+      const z = latest.heading; // heading from compass/magnetometer calculation
+
       tempEuler.current.set(
-        THREE.MathUtils.degToRad(latest.gx || 0),
-        THREE.MathUtils.degToRad(latest.gy || 0),
-        THREE.MathUtils.degToRad(latest.gz || 0),
+        THREE.MathUtils.degToRad(x || 0),
+        THREE.MathUtils.degToRad(y || 0),
+        THREE.MathUtils.degToRad(z || 0),
         'XYZ'
       );
 

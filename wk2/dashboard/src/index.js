@@ -22,11 +22,11 @@ function Shell() {
 
   return (
     <div>
-      <MenuButton className="top-4 left-1/2 transform -translate-x-1/2 flex items-center justify-center text-white">
+      {/* <MenuButton className="top-4 left-1/2 transform -translate-x-1/2 flex items-center justify-center text-white">
         <button onClick={() => { window.location.pathname = isRemote ? '/' : '/remote'; }}>
           {isRemote ? 'Dashboard' : 'Remote'}
         </button>
-      </MenuButton>
+      </MenuButton> */}
 
       {isRemote ? (
         <Remote />
