@@ -35,6 +35,7 @@ Adafruit_LSM303_Mag_Unified mag = Adafruit_LSM303_Mag_Unified(12345);
 float forwardHeading = 0;
 float heading;
 bool isCalibrated;
+float firstMagReadingMs = 0;
 
 // Gyro Thresholds
 int minThresh = 30;
@@ -103,15 +104,16 @@ void loop() {
     heading = atan2(event.magnetic.y, event.magnetic.x) * 180 / M_PI;
     
     // give an interval to allow user to calibrate by pointing up in the air (on z axis)
-    if (now <= 2000 && !isCalibrated) {
-      forwardHeading = heading;
-      isCalibrated = true;
+    
+    if (heading) {
+      if (firstMagReadingMs == 0) firstMagReadingMs = now;
+      if (now - firstMagReadingMs >= 1000 && !isCalibrated) {
+            forwardHeading = heading;
+            isCalibrated = true;
+        }
+      heading -= forwardHeading; // heading is -180 -> 180
     }
-    heading -= forwardHeading;
-    // heading is -180 -> 180
-  
-    // if (heading < 0) heading += 360;
-
+    
     // 2. Get Gyroscope Data
     if (IMU.gyroscopeAvailable() && IMU.accelerationAvailable()) {
       IMU.readAcceleration(ax, ay, az);
@@ -140,10 +142,9 @@ void loop() {
     message += "\"gx\":" + String(gx) + ",";
     message += "\"gy\":" + String(gy) + ",";
     message += "\"gz\":" + String(gz) + ",";
-    // message += "\"dir\":\"" + dir + "\",";
-    message += "\"heading\":" + String(heading ); // because i have to fit in the compass in my bb by rotating it -90deg
-    // message += "\"speedX\":" + String(speedX) + ",";
-    // message += "\"speedY\":" + String(speedY);
+    message += "\"heading\":" + String(heading); // because i have to fit in the compass in my bb by rotating it -90deg
+    // message += "\forwardHeading\":" + String(forwardHeading) + ",";
+    // message += "\calibrated\":" + String(isCalibrated);
     message += "},\"timestamp\":" + String(timeClient.getEpochTime()) + "}";
 
     client.println(message);

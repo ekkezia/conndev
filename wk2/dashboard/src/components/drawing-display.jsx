@@ -200,14 +200,14 @@ for (let y = 0; y <= viewHeight; y += spacing) {
   const { ax = 0, ay = 0, az = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;
 
   // activate the paint brush by flicking the device (detect via gy)
-  if (Math.abs(gx) > 80 || Math.abs(gy) > 80) {
+  if (Math.abs(gx) > 50 || Math.abs(gy) > 50) {
     // mark as ready to draw
     setDrawState(true);
   } else {
-    // set a timeout of 2s, if device stays stable, set drawing state to false
+    // set a timeout of 1s, if device stays stable, set drawing state to false
     setTimeout(() => {
-      if (ax < 0.2 && ay < 0.2) setDrawState(false);
-    }, 2000);
+      if (Math.abs(gx) < 4 && Math.abs(gy) < 4) setDrawState(false);
+    }, 1000);
   }
 
   if (!drawState) return; 
@@ -232,9 +232,13 @@ for (let y = 0; y <= viewHeight; y += spacing) {
   pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
   pos.y = Math.max(0, Math.min(pos.y, paper.view.size.height));
 
-  // stroke width from magnitude of ax & ay (pressure)
-  const magAxAy = Math.sqrt(ax * ax + ay * ay);
-  const strokeWidth = Math.max(0.1, magAxAy * strokeScale);
+  // stroke width from magnitude of ax & ay and gx & gy
+  let motion = Math.sqrt(ax*ax + ay*ay) + Math.sqrt(gx*gx + gy*gy);
+  const maxMotion = 40;
+  const maxStrokeWidth = 4;
+  const minStrokeWidth = 0.1;
+  let strokeWidth = (motion - 0) * (maxStrokeWidth - minStrokeWidth) / (maxMotion - 0) + minStrokeWidth;
+
 
   // Create a new segment path with its own stroke width
   const segmentPath = new paper.Path({
@@ -255,7 +259,7 @@ for (let y = 0; y <= viewHeight; y += spacing) {
     y: pos.y.toFixed(1),
     vx: vel.x.toFixed(2),
     vy: vel.y.toFixed(2),
-    magAxAy: Math.sqrt(ax * ax + ay * ay).toFixed(2),
+    motion: motion.toFixed(2),
     gx: gx.toFixed(2),
     gy: gy.toFixed(2),
     ax: ax.toFixed(2),
@@ -298,6 +302,7 @@ for (let y = 0; y <= viewHeight; y += spacing) {
         heading:{debug.heading}
       </div>
 
+        <span className={`fixed top-1/2 left-1/2 transform-x-[-50%] transform-y-[-50%] z-99 ${drawState ? 'hidden' : 'block'}`}>Swing your 🪄 to start drawing!</span>
       <canvas
         ref={canvasRef}
         resize="true"
