@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useRef } from 
 import { useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { SERVER_URL } from '../config';
+import { mockSensorData } from '../components/mock-data';
 
 const IMUContext = createContext(null);
 
@@ -9,7 +10,8 @@ export function IMUProvider({ children }) {
   const [connected, setConnected] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(false); // toggle open/close playback display
   const [isPlayingBack, setIsPlayingBack] = useState(false); // play/pause
-  const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null });
+  const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null, currentTimestamp: null, currentDataIdx: null });
+  const [sensorData, setSensorData] = useState(mockSensorData);
 
   const updateSensor = useCallback((newSensor) => {
     setSensorData((s) => [...s.slice(-999), newSensor]);
@@ -18,8 +20,6 @@ export function IMUProvider({ children }) {
   const connect = useCallback(() => setConnected(true), []);
   const disconnect = useCallback(() => setConnected(false), []);
   
-  const [sensorData, setSensorData] = useState([]);
-
   const socket = useRef(null);
 
   useEffect(() => {

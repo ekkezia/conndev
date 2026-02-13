@@ -1,3 +1,4 @@
+
 #include <Arduino_LSM6DS3.h>
 #include <Adafruit_LSM303_U.h>
 #include <Adafruit_Sensor.h>
@@ -41,10 +42,15 @@ float firstMagReadingMs = 0;
 int minThresh = 30;
 int maxThresh = 500;
 
+// LED Indicators
+int CALIBRATE_PIN = 3;
+int DRAW_PIN = 4;
+int BUTTON_PIN = 2;
+
 void setup() {
   Serial.begin(115200);
   while (!Serial) {}
-
+  
   // Connect WiFi
   WiFi.begin(SECRET_SSID, SECRET_PASS);
   Serial.print("Connecting to WiFi");
@@ -94,6 +100,8 @@ void loop() {
     lastNTPUpdate = now;
   }
 
+  // button
+
   // Send IMU data at ~50Hz
   if (now - lastSend >= sendInterval) {
     lastSend = now;
@@ -106,6 +114,9 @@ void loop() {
     // give an interval to allow user to calibrate by pointing up in the air (on z axis)
     
     if (heading) {
+      // via calibrate button
+      
+      // via code
       if (firstMagReadingMs == 0) firstMagReadingMs = now;
       if (now - firstMagReadingMs >= 1000 && !isCalibrated) {
             forwardHeading = heading;
@@ -121,12 +132,12 @@ void loop() {
     }
 
     // 3. Calculate Intensities
-    int speedY = 0;
-    int speedX = 0;
-    if (abs(gy) > minThresh)
-      speedY = map(constrain(abs(gy), minThresh, maxThresh), minThresh, maxThresh, 0, 100);
-    if (abs(gx) > minThresh)
-      speedX = map(constrain(abs(gx), minThresh, maxThresh), minThresh, maxThresh, 0, 100);
+    // int speedY = 0;
+    // int speedX = 0;
+    // if (abs(gy) > minThresh)
+    //   speedY = map(constrain(abs(gy), minThresh, maxThresh), minThresh, maxThresh, 0, 100);
+    // if (abs(gx) > minThresh)
+    //   speedX = map(constrain(abs(gx), minThresh, maxThresh), minThresh, maxThresh, 0, 100);
 
     // 4. Determine Direction
     // String dir = "FRONT";
@@ -151,3 +162,4 @@ void loop() {
     Serial.println(message);
   } 
 } 
+

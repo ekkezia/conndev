@@ -1,0 +1,19 @@
+export const mockSensorData = [
+  { sensor: { ax: 0.36, ay: 0.85, az: -0.29, gx: -125.92, gy: 28.5, gz: -186.1, heading: -158.55 }, timestamp: 1770938376 },
+  { sensor: { ax: 0.09, ay: 0.79, az: -0.05, gx: -135.5, gy: 66.71, gz: -153.69, heading: -158.55 }, timestamp: 1770938376 },
+  { sensor: { ax: -0.13, ay: 0.9, az: 0.2, gx: -144.23, gy: 70.5, gz: -134.83, heading: -133.32 }, timestamp: 1770938376 },
+  { sensor: { ax: -0.16, ay: 0.68, az: 0.07, gx: -195.86, gy: 126.89, gz: -138.43, heading: -119.77 }, timestamp: 1770938376 },
+  { sensor: { ax: -0.38, ay: 1.11, az: 0.53, gx: -138.98, gy: 85.51, gz: -113.04, heading: -109.27 }, timestamp: 1770938376 },
+  { sensor: { ax: -0.41, ay: 0.58, az: 0.28, gx: -138.24, gy: 90.64, gz: -94.3, heading: -109.27 }, timestamp: 1770938376 },
+  { sensor: { ax: -0.6, ay: 0.72, az: 0.65, gx: -140.99, gy: 61.22, gz: -119.2, heading: -100.17 }, timestamp: 1770938377 },
+  { sensor: { ax: -0.61, ay: 0.54, az: 0.56, gx: -148.74, gy: 39.55, gz: -83.01, heading: -89.81 }, timestamp: 1770938377 },
+  { sensor: { ax: -0.78, ay: 0.5, az: 0.8, gx: -46.39, gy: 39.12, gz: -47.42, heading: -82.43 }, timestamp: 1770938377 },
+  { sensor: { ax: -0.71, ay: 0.46, az: 0.59, gx: -95.64, gy: 76.29, gz: -47, heading: -82.43 }, timestamp: 1770938377 },
+  { sensor: { ax: -0.84, ay: 0.29, az: 0.7, gx: -73.73, gy: 69.09, gz: -64.03, heading: -75.38 }, timestamp: 1770938377 },
+  { sensor: { ax: -0.79, ay: 0.28, az: 0.47, gx: -93.87, gy: 81.05, gz: -80.99, heading: -66.45 }, timestamp: 1770938377 },
+  { sensor: { ax: -0.87, ay: 0.08, az: 0.45, gx: -43.15, gy: 76.72, gz: -47.85, heading: -54.74 }, timestamp: 1770938377 },
+  { sensor: { ax: -0.89, ay: 0.15, az: 0.36, gx: -46.51, gy: 80.69, gz: -44.68, heading: -54.74 }, timestamp: 1770938377 },
+  { sensor: { ax: -1.02, ay: 0.1, az: 0.45, gx: -7.51, gy: 55.48, gz: -19.78, heading: -48 }, timestamp: 1770938377 },
+  { sensor: { ax: 0.75, ay: 0.46, az: -0.5, gx: 37.17, gy: 0.06, gz: -0.61, heading: -283.21 }, timestamp: 1770938380 },
+  { sensor: { ax: 0.56, ay: 0.48, az: -0.59, gx: -9.46, gy: 13.85, gz: -31.92, heading: -276.78 }, timestamp: 1770938380 }
+];

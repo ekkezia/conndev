@@ -204,10 +204,10 @@ for (let y = 0; y <= viewHeight; y += spacing) {
     // mark as ready to draw
     setDrawState(true);
   } else {
-    // set a timeout of 1s, if device stays stable, set drawing state to false
-    setTimeout(() => {
-      if (Math.abs(gx) < 4 && Math.abs(gy) < 4) setDrawState(false);
-    }, 1000);
+    // // set a timeout of 1s, if device stays stable, set drawing state to false
+    // setTimeout(() => {
+    //   if (Math.abs(gx) < 4 && Math.abs(gy) < 4) setDrawState(false);
+    // }, 1000);
   }
 
   if (!drawState) return; 
@@ -225,8 +225,8 @@ for (let y = 0; y <= viewHeight; y += spacing) {
   const prevPos = previousPosRef.current ? previousPosRef.current.clone() : pos.clone();
   
   // scalar
-  pos.x += Math.cos(radians) * unit * -1;
-  pos.y += Math.sin(radians) * unit * -1;
+  pos.x += Math.sin(radians) * unit * 1;
+  pos.y += Math.cos(radians) * unit * -1;
 
   // clamp position to stay within canvas bounds
   pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
@@ -242,7 +242,7 @@ for (let y = 0; y <= viewHeight; y += spacing) {
 
   // Create a new segment path with its own stroke width
   const segmentPath = new paper.Path({
-    strokeColor: "black",
+    strokeColor: "fuchsia",
     strokeWidth: strokeWidth,
     strokeCap: "round",
     strokeJoin: "round"

@@ -6,17 +6,71 @@ import { useMemo, useEffect, useState } from "react";
 export default function PlaybackDisplay({ className}) {
     const { playbackMode: isOpen, setPlaybackMode: setIsOpen, sensorData, isPlayingBack, setIsPlayingBack, playbackStatus, setPlaybackStatus } = useIMU();
 
+    // clipped timestamp is the timestamp in the sensor data that matches the latest timestamp before the current Date.now()
+    // current timestamp is the timestamp that the user has clicked on the playback bar 
     useEffect(() => {
+        const now = Date.now();
         setIsPlayingBack(isOpen);
-        setPlaybackStatus(prev => ({ ...prev, clippedTimestamp: Date.now(), currentTimestamp: Date.now() })); // in milliseconds, set the clippedtimestamp up until NOW when user clicks on the button!
-        console.log('Playback mode changed:', Date.now());
-    }, [isOpen])
+
+        // Find the closest timestamp in sensorData that is <= now
+        const filteredData = (sensorData || []).filter(d => d.timestamp <= now);
+        const closestTimestamp = filteredData.length > 0 
+            ? filteredData[filteredData.length - 1].timestamp 
+            : now;
+
+        setPlaybackStatus(prev => ({ 
+            ...prev, 
+            clippedTimestamp: closestTimestamp, 
+            currentTimestamp: closestTimestamp 
+        }));
+        // console.log('Playback mode changed:', closestTimestamp);
+    }, [isOpen, sensorData])
 
     // do not put set objects to useMemo dependencies to avoid infinite loop
     const clippedSensorData = useMemo(
         () => (sensorData || []).filter(d => d.timestamp <= playbackStatus.clippedTimestamp), // only playback up until the current timestamp when user has clicked the playback button
         [sensorData, playbackStatus.clippedTimestamp]
     );
+
+    // Playback effect: auto-advance currentTimestamp if it's less than clippedTimestamp
+    useEffect(() => {
+        if (!isPlayingBack || !clippedSensorData || clippedSensorData.length === 0) return;
+
+        const interval = setInterval(() => {
+            setPlaybackStatus(prev => {
+                // Stop if we've reached or exceeded the clipped timestamp
+                if (prev.currentTimestamp >= prev.clippedTimestamp) {
+                    return prev;
+                }
+
+                // Use the stored currentDataIdx, or find it if not set
+                let currentIndex = prev.currentDataIdx;
+                if (currentIndex === undefined || currentIndex === null) {
+                    currentIndex = clippedSensorData.findIndex(d => d.timestamp >= prev.currentTimestamp);
+                }
+                
+                if (currentIndex === -1 || currentIndex >= clippedSensorData.length - 1) {
+                    // Reached the end
+                    console.log('Playback reached end at index:', clippedSensorData.length - 1);
+                    return prev;
+                }
+
+                // Move to next data point
+                const nextIndex = currentIndex + 1;
+                const nextTimestamp = clippedSensorData[nextIndex].timestamp;
+                
+                console.log('Playing back sensor data at index:', nextIndex, 'timestamp:', nextTimestamp);
+                
+                if (nextTimestamp > prev.clippedTimestamp) {
+                    return prev; // Stop if we've reached the clipped timestamp
+                }
+
+                return { ...prev, currentDataIdx: nextIndex, currentTimestamp: nextTimestamp };
+            });
+        }, 50); // Update every 50ms
+
+        return () => clearInterval(interval);
+    }, [isPlayingBack, clippedSensorData, setPlaybackStatus]);
 
     const progressSensorData = useMemo(
         () => {
@@ -42,9 +96,15 @@ export default function PlaybackDisplay({ className}) {
                 const clickRatio = clickX / rect.width;
                 const firstTimestamp = clippedSensorData[0].timestamp;
                 const range = playbackStatus.clippedTimestamp - firstTimestamp;
-                const newTimestamp = firstTimestamp + clickRatio * range;
-                setPlaybackStatus(prev => ({ ...prev, currentTimestamp: newTimestamp }));
-                console.log('Clicked playback bar:', newTimestamp);
+                const targetTimestamp = firstTimestamp + clickRatio * range;
+                
+                // Find the closest sensor data point to the clicked timestamp
+                const closestIndex = clippedSensorData.findIndex(d => d.timestamp >= targetTimestamp);
+                const actualIndex = closestIndex === -1 ? clippedSensorData.length - 1 : closestIndex;
+                const actualTimestamp = clippedSensorData[actualIndex].timestamp;
+                
+                setPlaybackStatus(prev => ({ ...prev, currentDataIdx: actualIndex, currentTimestamp: actualTimestamp }));
+                console.log('Clicked playback bar at index:', actualIndex, 'timestamp:', actualTimestamp);
             }}>
                 
                 <div 
