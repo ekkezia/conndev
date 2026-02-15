@@ -6,12 +6,11 @@ const unit = 25;
 
 export default function DrawingDisplay({ className }) {
   const canvasRef = useRef(null);
-  const pathRef = useRef(null);
   const positionRef = useRef(null);
   const previousPosRef = useRef(null);
   const velocityRef = useRef({ x: 0, y: 0 });
 
-  const { sensorData } = useIMU();
+  const { sensorData, playbackMode, playbackStatus } = useIMU();
 
   const [drawState, setDrawState] = useState(false); 
 
@@ -189,88 +188,109 @@ for (let y = 0; y <= viewHeight; y += spacing) {
     };
   }, []);
 
-  // ---------- UPDATE FROM IMU ----------
-  useEffect(() => {
-  if (!sensorData || !positionRef.current) return;
+  function drawLine(ax, ay, gx, gy, heading) {
+    const pos = positionRef.current;
+    const vel = velocityRef.current;
 
-  const s = sensorData[sensorData.length - 1];
-  // console.log('sensor data:', s, sensorData.length);
-  if (!s?.sensor) return;
+    // ---- tuning ----
+    const strokeScale = 1;
 
-  const { ax = 0, ay = 0, az = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;
+    // const speed = Math.sqrt(speedX * speedX + speedY * speedY);
+    const radians = (heading * Math.PI) / 180; // direction
+    
+    // Store previous position before updating
+    const prevPos = previousPosRef.current ? previousPosRef.current.clone() : pos.clone();
+    
+    // scalar
+    pos.x += Math.sin(radians) * unit * 1;
+    pos.y += Math.cos(radians) * unit * -1;
 
-  // activate the paint brush by flicking the device (detect via gy)
-  if (Math.abs(gx) > 50 || Math.abs(gy) > 50) {
-    // mark as ready to draw
-    setDrawState(true);
-  } else {
-    // // set a timeout of 1s, if device stays stable, set drawing state to false
-    // setTimeout(() => {
-    //   if (Math.abs(gx) < 4 && Math.abs(gy) < 4) setDrawState(false);
-    // }, 1000);
+    // clamp position to stay within canvas bounds
+    pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
+    pos.y = Math.max(0, Math.min(pos.y, paper.view.size.height));
+
+    // stroke width from magnitude of ax & ay and gx & gy
+    let motion = Math.sqrt(ax*ax + ay*ay) + Math.sqrt(gx*gx + gy*gy);
+    const maxMotion = 40;
+    const maxStrokeWidth = 4;
+    const minStrokeWidth = 0.1;
+    let strokeWidth = (motion - 0) * (maxStrokeWidth - minStrokeWidth) / (maxMotion - 0) + minStrokeWidth;
+
+
+    // Create a new segment path with its own stroke width
+    const segmentPath = new paper.Path({
+      strokeColor: "fuchsia",
+      strokeWidth: strokeWidth,
+      strokeCap: "round",
+      strokeJoin: "round"
+    });
+    segmentPath.add(prevPos);
+    segmentPath.add(pos.clone());
+    
+    // Update previous position for next iteration
+    previousPosRef.current = pos.clone();
+
+    paper.view.draw();
   }
 
-  if (!drawState) return; 
+    // ---------- UPDATE FROM IMU ----------
+  useEffect(() => {
+    if (!sensorData || !positionRef.current || playbackMode) return;
 
-  const pos = positionRef.current;
-  const vel = velocityRef.current;
+    const s = sensorData[sensorData.length - 1];
+    // console.log('sensor data:', s, sensorData.length);
+    if (!s?.sensor) return;
 
-  // ---- tuning ----
-  const strokeScale = 1;
+    const { ax = 0, ay = 0, az = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;
 
-  // const speed = Math.sqrt(speedX * speedX + speedY * speedY);
-  const radians = (heading * Math.PI) / 180; // direction
-  
-  // Store previous position before updating
-  const prevPos = previousPosRef.current ? previousPosRef.current.clone() : pos.clone();
-  
-  // scalar
-  pos.x += Math.sin(radians) * unit * 1;
-  pos.y += Math.cos(radians) * unit * -1;
+    // activate the paint brush by flicking the device (detect via gy)
+    if (Math.abs(gx) > 50 || Math.abs(gy) > 50) {
+      // mark as ready to draw
+      setDrawState(true);
+    } else {
+      // // set a timeout of 1s, if device stays stable, set drawing state to false
+      // setTimeout(() => {
+      //   if (Math.abs(gx) < 4 && Math.abs(gy) < 4) setDrawState(false);
+      // }, 1000);
+    }
 
-  // clamp position to stay within canvas bounds
-  pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
-  pos.y = Math.max(0, Math.min(pos.y, paper.view.size.height));
+    if (!drawState) return; 
 
-  // stroke width from magnitude of ax & ay and gx & gy
-  let motion = Math.sqrt(ax*ax + ay*ay) + Math.sqrt(gx*gx + gy*gy);
-  const maxMotion = 40;
-  const maxStrokeWidth = 4;
-  const minStrokeWidth = 0.1;
-  let strokeWidth = (motion - 0) * (maxStrokeWidth - minStrokeWidth) / (maxMotion - 0) + minStrokeWidth;
+    drawLine(ax, ay, gx, gy, heading);
 
+    setDebug({
+      points: 0, // segment-based paths don't have a single point count
+      x: positionRef.current.x.toFixed(1),
+      y: positionRef.current.y.toFixed(1),
+      vx: velocityRef.current.x.toFixed(2),
+      vy: velocityRef.current.y.toFixed(2),
+      gx: gx.toFixed(2),
+      gy: gy.toFixed(2),
+      ax: ax.toFixed(2),
+      ay: ay.toFixed(2),
+      az: az.toFixed(2),
+      heading: heading.toFixed(2),
+    });
 
-  // Create a new segment path with its own stroke width
-  const segmentPath = new paper.Path({
-    strokeColor: "fuchsia",
-    strokeWidth: strokeWidth,
-    strokeCap: "round",
-    strokeJoin: "round"
-  });
-  segmentPath.add(prevPos);
-  segmentPath.add(pos.clone());
-  
-  // Update previous position for next iteration
-  previousPosRef.current = pos.clone();
+    paper.view.draw();
+}, [sensorData, drawState, playbackMode]);
 
-  setDebug({
-    points: 0, // segment-based paths don't have a single point count
-    x: pos.x.toFixed(1),
-    y: pos.y.toFixed(1),
-    vx: vel.x.toFixed(2),
-    vy: vel.y.toFixed(2),
-    motion: motion.toFixed(2),
-    gx: gx.toFixed(2),
-    gy: gy.toFixed(2),
-    ax: ax.toFixed(2),
-    ay: ay.toFixed(2),
-    az: az.toFixed(2),
-    heading: heading.toFixed(2),
-  });
+  useEffect(() => {
+    if (!playbackMode) return;
+    
+    if (!sensorData) return;
 
-  paper.view.draw();
-}, [sensorData, drawState]);
+    // console.log(sensorData, playbackStatus.currentDataIdx);
 
+    let s = sensorData[playbackStatus.currentDataIdx || 0]; 
+
+    if (!s?.sensor) return;
+
+    const { ax = 0, ay = 0, az = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;   
+      
+    drawLine(ax, ay, gx, gy, heading);
+
+   }, [playbackMode, playbackStatus, sensorData]);
 
   return (
     <div
