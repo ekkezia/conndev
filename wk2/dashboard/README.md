@@ -1,8 +1,8 @@
-# Getting Started with Create React App
+# Magic Wand Dashboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A magic wand, made possible with Arduino Nano 33 IoT & IMU that tracks your hand movement 
 
-## Available Scripts
+## Frontend: ReactJS
 
 In the project directory, you can run:
 
@@ -11,60 +11,41 @@ In the project directory, you can run:
 Runs the app in the development mode.\
 Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Arduino
+Look at 1 folder up to `gyro_tcp.ino` and upload the code to your Arduino.
 
-### `npm test`
+## Server
+Look at 1 folder up to find `server.js`
+Run:
+`node server.js`
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Flow of Data
+1. Arduino sends data via TCP (to be changed to MQTT) in the form of:
+`{
+  sensor: {
+    ax: // accelerometer
+    ay:
+    gx: // gyrometer
+    gy:
+    heading: // direction of compass or magnetometer
+  },
+  timestamp: 
+}`
+2. Server has a TCP opening and **receives** Arduino data, **preprocess** it, **append** it to an store array, then **send** to Socket.io for real-time updates
+3. Socket.io broadcasts to frontend client
 
-### `npm run build`
+## Dashboard Features
+### Sketchpad
+The sketch line is made out of an array of points.
+- `heading` : radians of heading controls the direction of x & y of the points
+- `gx, gy, ax, ay`: square root of both magnitudes control the pressure of the ink
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### Timeline
+Click on the bottom right circular button to activate timeline mode.
+It will pause the current sketching and only show the drawing up until the timestamp when you have paused. 
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### Graph
+Click on the bottom left circular button to look at the graph.
+Toggle between acceleromter, gyrometer, and magnetometer view.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
 
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
