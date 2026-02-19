@@ -6,27 +6,26 @@ const unit = 25;
 
 export default function DrawingDisplay({ className }) {
   const canvasRef = useRef(null);
-  const positionRef = useRef(null);
-  const previousPosRef = useRef(null);
-  const velocityRef = useRef({ x: 0, y: 0 });
+
+  // ----- LAYERS -----
+  const gridLayerRef = useRef(null);
+  const realtimeLayerRef = useRef(null);
+  const playbackLayerRef = useRef(null);
+
+  // ----- REALTIME STATE -----
+  const realtimePosRef = useRef(null);
+  const realtimePrevRef = useRef(null);
+
+  // ----- PLAYBACK STATE -----
+  const playbackPosRef = useRef(null);
+  const playbackPrevRef = useRef(null);
 
   const { sensorData, playbackMode, playbackStatus } = useIMU();
+  const [drawState, setDrawState] = useState(false);
 
-  const [drawState, setDrawState] = useState(false); 
-
-  // ---- DEBUG STATE ----
-  const [debug, setDebug] = useState({
-    points: 0,
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    ax: 0,
-    ay: 0,
-    az: 0
-  });
-
-  // ---------- SETUP PAPER ----------
+  // =================================================
+  // SETUP PAPER + GRID + CARTESIAN AXES
+  // =================================================
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -34,94 +33,90 @@ export default function DrawingDisplay({ className }) {
     paper.setup(canvas);
 
     const { width, height } = canvas.getBoundingClientRect();
-    if (width && height) {
-      canvas.width = width;
-      canvas.height = height;
-      paper.view.viewSize = new paper.Size(width, height);
+    canvas.width = width;
+    canvas.height = height;
+    paper.view.viewSize = new paper.Size(width, height);
+
+    const center = new paper.Point(
+      Math.round(width / 2 / unit) * unit,
+      Math.round(height / 2 / unit) * unit
+    );
+
+    // ----- CREATE LAYERS -----
+    gridLayerRef.current = new paper.Layer();
+    realtimeLayerRef.current = new paper.Layer();
+    playbackLayerRef.current = new paper.Layer();
+
+    gridLayerRef.current.sendToBack();
+    realtimeLayerRef.current.insertAbove(gridLayerRef.current);
+    playbackLayerRef.current.insertAbove(realtimeLayerRef.current);
+
+    // ----- INIT POSITIONS -----
+    realtimePosRef.current = center.clone();
+    realtimePrevRef.current = center.clone();
+    playbackPosRef.current = center.clone();
+    playbackPrevRef.current = center.clone();
+
+    // =========================
+    // DRAW GRID
+    // =========================
+    gridLayerRef.current.activate();
+
+    const spacing = unit;
+
+    for (let x = 0; x <= width; x += spacing) {
+      new paper.Path.Line({
+        from: [x, 0],
+        to: [x, height],
+        strokeColor: new paper.Color(1, 1, 1, 0.15),
+        strokeWidth: 1,
+      });
     }
 
-    // start at center
-    positionRef.current = new paper.Point(
-      paper.view.size.width / 2,
-      paper.view.size.height / 2
-    );
+    for (let y = 0; y <= height; y += spacing) {
+      new paper.Path.Line({
+        from: [0, y],
+        to: [width, y],
+        strokeColor: new paper.Color(1, 1, 1, 0.15),
+        strokeWidth: 1,
+      });
+    }
 
-    velocityRef.current = { x: 0, y: 0 };
-    previousPosRef.current = new paper.Point(
-      paper.view.size.width / 2,
-      paper.view.size.height / 2
-    );
-
-    paper.view.draw();
-
-    // ----- DRAW GRID -----
-const gridGroup = new paper.Group();
-gridGroup.sendToBack();
-
-const spacing = unit;
-const viewWidth = paper.view.size.width;
-const viewHeight = paper.view.size.height;
-
-for (let x = 0; x <= viewWidth; x += spacing) {
-  const vLine = new paper.Path.Line({
-    from: [x, 0],
-    to: [x, viewHeight],
-    strokeColor: new paper.Color(1, 1, 1, 0.15),
-    strokeWidth: 1
-  });
-  gridGroup.addChild(vLine);
-}
-
-for (let y = 0; y <= viewHeight; y += spacing) {
-  const hLine = new paper.Path.Line({
-    from: [0, y],
-    to: [viewWidth, y],
-    strokeColor: new paper.Color(1, 1, 1, 0.15),
-    strokeWidth: 1
-  });
-  gridGroup.addChild(hLine);
-}
-
-    // ----- CENTER LABEL -----
-    const rawCenter = paper.view.center;
-    const center = new paper.Point(
-      Math.round(rawCenter.x / unit) * unit,
-      Math.round(rawCenter.y / unit) * unit
-    );
-
-    // Draw main axes
-    const xAxis = new paper.Path.Line({
+    // =========================
+    // DRAW AXES
+    // =========================
+    new paper.Path.Line({
       from: [0, center.y],
-      to: [viewWidth, center.y],
+      to: [width, center.y],
       strokeColor: "red",
-      strokeWidth: 1
+      strokeWidth: 2,
     });
 
-    const yAxis = new paper.Path.Line({
+    new paper.Path.Line({
       from: [center.x, 0],
-      to: [center.x, viewHeight],
+      to: [center.x, height],
       strokeColor: "green",
-      strokeWidth: 1
+      strokeWidth: 2,
     });
 
-    // ---- Numbering ----
+    // =========================
+    // NUMBERING
+    // =========================
 
-    // X axis numbers
+    // X positive →
     let xIndex = 0;
-    for (let x = center.x; x <= viewWidth; x += spacing) {
-      const value = xIndex;
-
+    for (let x = center.x; x <= width; x += spacing) {
       new paper.PointText({
         point: [x, center.y + 15],
-        content: value.toString(),
+        content: xIndex.toString(),
         fillColor: "white",
         fontSize: 10,
-        justification: "center"
+        justification: "center",
       });
-
       xIndex++;
     }
 
+    // X negative ←
     xIndex = -1;
     for (let x = center.x - spacing; x >= 0; x -= spacing) {
       new paper.PointText({
@@ -129,49 +124,44 @@ for (let y = 0; y <= viewHeight; y += spacing) {
         content: xIndex.toString(),
         fillColor: "white",
         fontSize: 10,
-        justification: "center"
+        justification: "center",
       });
-
       xIndex--;
     }
 
-
-    // Y axis numbers
+    // Y positive ↑
     let yIndex = 0;
     for (let y = center.y; y >= 0; y -= spacing) {
       new paper.PointText({
-        point: [center.x + 4, y + 4],
+        point: [center.x + 5, y + 4],
         content: yIndex.toString(),
         fillColor: "white",
         fontSize: 10,
-        justification: "left"
+        justification: "left",
       });
-
       yIndex++;
     }
 
+    // Y negative ↓
     yIndex = -1;
-    for (let y = center.y + spacing; y <= viewHeight; y += spacing) {
+    for (let y = center.y + spacing; y <= height; y += spacing) {
       new paper.PointText({
-        point: [center.x + 4, y + 4],
+        point: [center.x + 5, y + 4],
         content: yIndex.toString(),
         fillColor: "white",
         fontSize: 10,
-        justification: "left"
+        justification: "left",
       });
-
       yIndex--;
     }
 
-
-    // ---- Big X and Y labels ----
-
+    // Big axis labels
     new paper.PointText({
-      point: [viewWidth - 20, center.y - 10],
+      point: [width - 25, center.y - 10],
       content: "X",
       fillColor: "white",
       fontSize: 16,
-      fontWeight: "bold"
+      fontWeight: "bold",
     });
 
     new paper.PointText({
@@ -179,154 +169,132 @@ for (let y = 0; y <= viewHeight; y += spacing) {
       content: "Y",
       fillColor: "white",
       fontSize: 16,
-      fontWeight: "bold"
+      fontWeight: "bold",
     });
 
+    paper.view.draw();
 
     return () => {
       paper.project.clear();
     };
   }, []);
 
-  function drawLine(ax, ay, gx, gy, heading) {
-    const pos = positionRef.current;
-    const vel = velocityRef.current;
+  // =================================================
+  // GENERIC DRAW FUNCTION
+  // =================================================
+  function drawLine(ax, ay, gx, gy, heading, layer, posRef, prevRef) {
+    if (!layer || !posRef.current || !prevRef.current) return;
 
-    // ---- tuning ----
-    const strokeScale = 1;
+    layer.activate();
 
-    // const speed = Math.sqrt(speedX * speedX + speedY * speedY);
-    const radians = (heading * Math.PI) / 180; // direction
-    
-    // Store previous position before updating
-    const prevPos = previousPosRef.current ? previousPosRef.current.clone() : pos.clone();
-    
-    // scalar
-    pos.x += Math.sin(radians) * unit * 1;
-    pos.y += Math.cos(radians) * unit * -1;
+    const pos = posRef.current;
+    const prevPos = prevRef.current.clone();
 
-    // clamp position to stay within canvas bounds
+    const radians = (heading * Math.PI) / 180;
+
+    pos.x += Math.sin(radians) * unit;
+    pos.y += Math.cos(radians) * -unit;
+
     pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
     pos.y = Math.max(0, Math.min(pos.y, paper.view.size.height));
 
-    // stroke width from magnitude of ax & ay and gx & gy
-    let motion = Math.sqrt(ax*ax + ay*ay) + Math.sqrt(gx*gx + gy*gy);
+    const motion = Math.sqrt(ax * ax + ay * ay) + Math.sqrt(gx * gx + gy * gy);
     const maxMotion = 40;
     const maxStrokeWidth = 4;
-    const minStrokeWidth = 0.1;
-    let strokeWidth = (motion - 0) * (maxStrokeWidth - minStrokeWidth) / (maxMotion - 0) + minStrokeWidth;
+    const minStrokeWidth = 0.2;
 
+    const strokeWidth =
+      ((motion - 0) * (maxStrokeWidth - minStrokeWidth)) / (maxMotion - 0) +
+      minStrokeWidth;
 
-    // Create a new segment path with its own stroke width
-    const segmentPath = new paper.Path({
-      strokeColor: "fuchsia",
-      strokeWidth: strokeWidth,
+    const segment = new paper.Path({
+      strokeColor: layer === playbackLayerRef.current ? "cyan" : "fuchsia",
+      strokeWidth,
       strokeCap: "round",
-      strokeJoin: "round"
+      strokeJoin: "round",
     });
-    segmentPath.add(prevPos);
-    segmentPath.add(pos.clone());
-    
-    // Update previous position for next iteration
-    previousPosRef.current = pos.clone();
+
+    segment.add(prevPos);
+    segment.add(pos.clone());
+
+    prevRef.current = pos.clone();
 
     paper.view.draw();
   }
 
-    // ---------- UPDATE FROM IMU ----------
+  // =================================================
+  // REALTIME MODE
+  // =================================================
   useEffect(() => {
-    if (!sensorData || !positionRef.current || playbackMode) return;
+    if (!sensorData || playbackMode) return;
 
     const s = sensorData[sensorData.length - 1];
-    // console.log('sensor data:', s, sensorData.length);
     if (!s?.sensor) return;
 
-    const { ax = 0, ay = 0, az = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;
+    const { ax = 0, ay = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;
 
-    // activate the paint brush by flicking the device (detect via gy)
     if (Math.abs(gx) > 50 || Math.abs(gy) > 50) {
-      // mark as ready to draw
       setDrawState(true);
-    } else {
-      // // set a timeout of 1s, if device stays stable, set drawing state to false
-      // setTimeout(() => {
-      //   if (Math.abs(gx) < 4 && Math.abs(gy) < 4) setDrawState(false);
-      // }, 1000);
     }
 
-    if (!drawState) return; 
+    if (!drawState) return;
 
-    drawLine(ax, ay, gx, gy, heading);
+    drawLine(
+      ax,
+      ay,
+      gx,
+      gy,
+      heading,
+      realtimeLayerRef.current,
+      realtimePosRef,
+      realtimePrevRef
+    );
+  }, [sensorData, drawState, playbackMode]);
 
-    setDebug({
-      points: 0, // segment-based paths don't have a single point count
-      x: positionRef.current.x.toFixed(1),
-      y: positionRef.current.y.toFixed(1),
-      vx: velocityRef.current.x.toFixed(2),
-      vy: velocityRef.current.y.toFixed(2),
-      gx: gx.toFixed(2),
-      gy: gy.toFixed(2),
-      ax: ax.toFixed(2),
-      ay: ay.toFixed(2),
-      az: az.toFixed(2),
-      heading: heading.toFixed(2),
-    });
-
-    paper.view.draw();
-}, [sensorData, drawState, playbackMode]);
-
+  // =================================================
+  // PLAYBACK MODE
+  // =================================================
   useEffect(() => {
-    if (!playbackMode) return;
-    
-    if (!sensorData) return;
+    if (!playbackMode || !sensorData) return;
 
-    // console.log(sensorData, playbackStatus.currentDataIdx);
+    const width = paper.view.size.width;
+    const height = paper.view.size.height;
+    const center = new paper.Point(width / 2, height / 2);
 
-    let s = sensorData[playbackStatus.currentDataIdx || 0]; 
+    // Clear playback layer only
+    playbackLayerRef.current.removeChildren();
 
-    if (!s?.sensor) return;
+    // Reset playback position only
+    playbackPosRef.current = center.clone();
+    playbackPrevRef.current = center.clone();
 
-    const { ax = 0, ay = 0, az = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;   
-      
-    drawLine(ax, ay, gx, gy, heading);
+    const maxIdx = playbackStatus.currentDataIdx || 0;
 
-   }, [playbackMode, playbackStatus, sensorData]);
+    for (let i = 0; i <= maxIdx; i++) {
+      const s = sensorData[i];
+      if (!s?.sensor) continue;
+
+      const { ax = 0, ay = 0, gx = 0, gy = 0, heading = 0 } = s.sensor;
+
+      drawLine(
+        ax,
+        ay,
+        gx,
+        gy,
+        heading,
+        playbackLayerRef.current,
+        playbackPosRef,
+        playbackPrevRef
+      );
+    }
+  }, [playbackMode, playbackStatus.currentDataIdx, sensorData]);
 
   return (
-    <div
-      className={`absolute top-0 left-0 w-full h-full flex items-center justify-center z-0 pointer-events-none ${className}`}
-    >
-      {/* DEBUG HUD */}
-      <div
-        style={{
-          position: "fixed",
-          top: 60,
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "rgba(0,0,0,0.75)",
-          color: "lime",
-          fontFamily: "monospace",
-          fontSize: 12,
-          padding: "6px 10px",
-          borderRadius: 6,
-          zIndex: 9999,
-          pointerEvents: "none",
-          whiteSpace: "nowrap"
-        }}
-      >
-        pts: {debug.points} | 
-        x:{debug.x} y:{debug.y} | 
-        vx:{debug.vx} vy:{debug.vy} | 
-        gx: {debug.gx} gy:{debug.gy} |
-        ax:{debug.ax} ay:{debug.ay} | magAxAy:{debug.magAxAy} |
-        heading:{debug.heading}
-      </div>
-
-        <span className={`fixed top-1/2 left-1/2 transform-x-[-50%] transform-y-[-50%] z-99 ${drawState ? 'hidden' : 'block'}`}>Swing your 🪄 to start drawing!</span>
+    <div className={`absolute top-0 left-0 w-full h-full ${className}`}>
       <canvas
         ref={canvasRef}
         resize="true"
-        className="w-full h-full border border-white/20 rounded-lg shadow-center bg-gray-400"
+        className="w-full h-full bg-gray-400"
       />
     </div>
   );
