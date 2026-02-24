@@ -29,26 +29,64 @@ let mouseEnabled = false;
 let smoothX = 0;
 let smoothY = 0;
 
+// Generates mock sensor data matching the Arduino message format
+function generateMockSensor() {
+  const t = Date.now() / 1000;
+  return {
+    ax: (Math.sin(t * 0.7) * 2).toFixed(2) * 1,
+    ay: (Math.cos(t * 0.5) * 2).toFixed(2) * 1,
+    az: (9.8 + Math.sin(t * 0.3) * 0.2).toFixed(2) * 1,
+    gx: (Math.sin(t * 1.2) * 30).toFixed(2) * 1,   // deg/s — drives mouseY
+    gy: (Math.cos(t * 0.9) * 30).toFixed(2) * 1,   // deg/s — drives mouseX
+    gz: (Math.sin(t * 0.4) * 10).toFixed(2) * 1,
+    heading: ((t * 20) % 360).toFixed(1) * 1,
+    fwdHeading: ((t * 20) % 360).toFixed(1) * 1,
+    calibrated: true,
+  };
+}
+
+// Accepts sensor data in Arduino format:
+// { ax, ay, az, gx, gy, gz, heading, fwdHeading, calibrated }
+// Direction comes from fwdHeading; magnitude from sqrt(gx² + gy²).
 function moveMouseFromIMU(sensor) {
   if (!mouseEnabled) return;
-  if (sensor.pitch === undefined || sensor.roll === undefined) return;
+  if (sensor.gx === undefined || sensor.gy === undefined || sensor.fwdHeading === undefined) return;
 
-  const sensitivity = 8;
-  const alpha = 0.2;     // smoothing factor
-  const deadZone = 0.5;  // ignore tiny jitter
+  const sensitivity = 0.15; // pixels per (deg/s) per tick
+  const alpha = 0.25;       // EMA smoothing factor
+  const threshold = 1.5;     // deg/s — ignore small jitter
 
-  const roll = Math.abs(sensor.roll) < deadZone ? 0 : sensor.roll;
-  const pitch = Math.abs(sensor.pitch) < deadZone ? 0 : sensor.pitch;
+  // Magnitude: total angular velocity from gyroscope
+  const magnitude = Math.sqrt(sensor.gx ** 2 + sensor.gy ** 2);
+  const effectiveMag = magnitude < threshold ? 0 : magnitude;
 
-  smoothX = smoothX * (1 - alpha) + roll * alpha;
-  smoothY = smoothY * (1 - alpha) + pitch * alpha;
+  // Direction: unit vector from fwdHeading (degrees, 0 = up/north)
+  const headingRad = (sensor.fwdHeading * Math.PI) / 180;
+  const dirX = Math.sin(headingRad);   // screen right when heading = 90
+  const dirY = -Math.cos(headingRad);  // screen up   when heading = 0 (inverted Y)
+
+  smoothX = smoothX * (1 - alpha) + dirX * effectiveMag * alpha;
+  smoothY = smoothY * (1 - alpha) + dirY * effectiveMag * alpha;
 
   const mouse = robot.getMousePos();
 
   robot.moveMouse(
-    mouse.x + smoothX * sensitivity,
-    mouse.y + smoothY * sensitivity
+    Math.round(mouse.x + smoothX * sensitivity),
+    Math.round(mouse.y + smoothY * sensitivity)
   );
+}
+
+// Run mock data through moveMouseFromIMU every 50 ms.
+// Toggle with the MOCK_MOUSE env var: MOCK_MOUSE=1 node server_mouse.js
+const MOCK_MOUSE = "1";
+if (MOCK_MOUSE === "1") {
+  mouseEnabled = true;
+  console.log("🧪 Mock mouse mode ENABLED — sending fake IMU data every 50 ms");
+  setInterval(() => {
+    const sensor = generateMockSensor();
+    console.log("🧪 Mock sensor:", sensor);
+    moveMouseFromIMU(sensor);
+  }, 50);
 }
 
 // ===============================
