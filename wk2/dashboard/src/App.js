@@ -3,7 +3,7 @@ import MenuButton from './menu-button';
 import DashboardDisplay from './components/dashboard-display';
 import { useIMU } from './contexts/IMUContext';
 import R3FCanvas from './components/r3f-canvas';
-import PlaybackDisplay from './components/playback-display';
+import PlaybackDisplay from './components/playback/playback-display';
 import { useRef, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { SERVER_URL } from './config';
@@ -34,18 +34,26 @@ function App() {
   return (
       <div className="relative bg-black h-screen w-screen ">
         <div className="w-full h-full z-10 fixed top-0 left-0">
+          {/* Top Left */}
           <MenuButton className="top-4 left-4 items-center justify-center flex relative" >
-            <div className={`z-[999] border border-white w-3 h-3 rounded-full opacity-100 ${status === 'connected' ? 'bg-green-900' : 'bg-red-900'}`} />
-            abc
+            <span className="text-xl">{status === 'connected' ? '🔗' : '⛓️‍💥'}</span>
           </MenuButton>
-          <MenuButton className="top-4 right-4" onClick={() => setMode(!mode)} />
-          <UserDisplay user={user} />
 
+          {/* Top Right */}
+          <MenuButton className="top-4 right-4 items-center justify-center flex" onClick={() => setMode(!mode)}>
+            <span className="text-xl">{mode ? '🔦' : '✏️'}</span>
+          </MenuButton>
+
+          {/* <UserDisplay user={user} /> */}
+
+          {/* Bottom Left */}
           <DashboardDisplay />
+          
+          {/* Bottom Right */}
           <PlaybackDisplay />
           <MenuButton className="bottom-4 right-4 flex items-center justify-center text-white">
-            <button onClick={() => setPlaybackMode(!playbackMode)}>
-              {playbackMode ? '🔒' : '▶'}
+            <button className="w-full h-full" onClick={() => setPlaybackMode(!playbackMode)}>
+              📈
             </button>
           </MenuButton>
         </div>

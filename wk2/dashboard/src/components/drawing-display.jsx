@@ -20,7 +20,7 @@ export default function DrawingDisplay({ className }) {
   const playbackPosRef = useRef(null);
   const playbackPrevRef = useRef(null);
 
-  const { sensorData, playbackMode, playbackStatus } = useIMU();
+  const { sensorData, playbackMode, playbackStatus, enableHelper } = useIMU();
   const [drawState, setDrawState] = useState(false);
 
   // =================================================
@@ -178,6 +178,12 @@ export default function DrawingDisplay({ className }) {
       paper.project.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!gridLayerRef.current) return;
+    gridLayerRef.current.visible = enableHelper;
+    paper.view.draw();
+  }, [enableHelper]);
 
   // =================================================
   // GENERIC DRAW FUNCTION

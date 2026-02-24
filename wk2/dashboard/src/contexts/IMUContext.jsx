@@ -11,6 +11,7 @@ export function IMUProvider({ children }) {
   const [playbackMode, setPlaybackMode] = useState(false); // toggle open/close playback display
   const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null, currentTimestamp: null, currentDataIdx: null, isPlaying: false }); // default to play, false for pause
   const [sensorData, setSensorData] = useState(mockSensorData);
+  const [enableHelper, setEnableHelper] = useState(false);
 
   const updateSensor = useCallback((newSensor) => {
     setSensorData((s) => [...s.slice(-999), newSensor]);
@@ -39,7 +40,9 @@ export function IMUProvider({ children }) {
     playbackMode,
     setPlaybackMode,
     playbackStatus,
-    setPlaybackStatus
+    setPlaybackStatus,
+    enableHelper,
+    setEnableHelper,
   };
 
   return <IMUContext.Provider value={value}>{children}</IMUContext.Provider>;
