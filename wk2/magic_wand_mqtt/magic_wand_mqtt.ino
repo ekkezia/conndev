@@ -8,6 +8,10 @@
 #include <Wire.h>
 #include "arduino_secrets.h"
 
+// --- Indicator Button ---
+const int buttonPin = 12;   // D2
+int calibrateButtonIsPressedCounter = 0;
+
 // --- WiFi + MQTT ---
 WiFiClient wifi;
 MqttClient mqttClient(wifi);
@@ -39,7 +43,10 @@ float firstMagReadingMs = 0;
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 5000);
-  
+
+  // 0. Button setup
+  pinMode(buttonPin, INPUT_PULLUP);
+
   // 1. Connect WiFi
   connectToNetwork();
 
@@ -63,17 +70,18 @@ void setup() {
 
 void loop() {
   // Ensure we stay connected
-  if (WiFi.status() != WL_CONNECTED) {
-    connectToNetwork();
-    return;
-  }
+  // if (WiFi.status() != WL_CONNECTED) {
+  //   connectToNetwork();
+  //   return;
+  // }
 
-  if (!mqttClient.connected()) {
-    connectToBroker();
-  }
+  // if (!mqttClient.connected()) {
+  //   connectToBroker();
+  // }
 
-  // Poll for incoming MQTT messages (if any)
-  mqttClient.poll();
+  // // Poll for incoming MQTT messages (if any)
+  // mqttClient.poll();
+
   unsigned long now = millis();
 
   // Update NTP (once/min)
@@ -91,9 +99,19 @@ void loop() {
     mag.getEvent(&event);
     heading = atan2(event.magnetic.y, event.magnetic.x) * 180 / M_PI;
     
+    // Calibrat using button
+    Serial.println(calibrateButtonIsPressedCounter);
+    if (digitalRead(buttonPin) == HIGH  && calibrateButtonIsPressedCounter < 1) {
+      calibrateButtonIsPressedCounter++;
+      Serial.println("Button HIGH");
+    }
+    bool triggerCalibration = calibrateButtonIsPressedCounter == 1;
+
     if (firstMagReadingMs == 0) firstMagReadingMs = now;
-    if (now - firstMagReadingMs >= 1000 && !isCalibrated) {
+    if (now - firstMagReadingMs >= 1000 && triggerCalibration && !isCalibrated) {
         forwardHeading = heading;
+        Serial.print("Calibrating fwd heading as");
+        // Serial.println(forwardHeading);
         isCalibrated = true;
     }
     heading -= forwardHeading;

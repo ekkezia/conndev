@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRef } from "react";
 import { useEffect } from "react";
 import { useIMU } from "../contexts/IMUContext";
-import GridHelperToggle from "./grid-helper-toggle";
+import GraphDashboard from "./playback/graph-dashboard";
 
 export default function DashboardDisplay({ className}) {
     const [isOpen, setIsOpen] = useState(false);
@@ -39,28 +39,23 @@ export default function DashboardDisplay({ className}) {
     }, [isOpen]);
     
   return (
-    <>
+    <div ref={displayRef} className={clsx(isOpen ? "z-40" : "z-50")}>
         <MenuButton
-            className={clsx("bottom-4 left-4 z-[999] w-12 h-12 rounded-full", className)}
+            className={clsx(
+                "bottom-4 left-4",
+                isOpen ? "w-fit h-fit rounded-xl" : "w-12 h-12 rounded-full"
+            )}
             onClick={() => setIsOpen((prev) => !prev)}
         >
-            <span className="w-full h-full flex items-center justify-center text-xl">⚙️</span>
-        </MenuButton>
-        <div ref={displayRef}>
-            <MenuButton
-                className={clsx(
-                    "bottom-4 left-4",
-                    isOpen ? "w-fit h-fit rounded-xl" : "w-12 h-12 rounded-full"
-                )}
-            >
-            {
-                isOpen &&
-                <div className="relative w-fit h-fit min-w-[120px] p-2 pb-16" onClick={(e) => e.stopPropagation()}>
-                    <GridHelperToggle />
+            {!isOpen && <span className="w-full h-full flex items-center justify-center text-xl">📊</span>}
+            {isOpen && (
+                <div className="relative w-fit h-fit flex flex-col gap-2 p-2 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                    <div className="rounded-xl border border-white/20 bg-black/70 p-3 min-w-[80vw] max-w-[80vw]">
+                        <GraphDashboard embedded className="min-w-0 max-w-full h-[44vh]" />
+                    </div>
                 </div>
-            }
-            </MenuButton>
-        </div>
-    </>
+            )}
+        </MenuButton>
+    </div>
   );
 }

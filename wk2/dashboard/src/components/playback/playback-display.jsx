@@ -2,7 +2,6 @@ import clsx from "clsx";
 import MenuButton from "../../menu-button";
 import { useIMU } from "../../contexts/IMUContext";
 import { useMemo, useEffect, useRef, useState } from "react";
-import GraphDashboard from "./graph-dashboard";
 
 function formatPlaybackTime(ms) {
   const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
@@ -80,10 +79,10 @@ export default function PlaybackDisplay({ className }) {
 
     // paused
     if (!playbackStatus.isPlaying) {
-      console.log(
-        "Playback paused at timestamp:",
-        playbackStatus.currentTimestamp
-      );
+      // console.log(
+      //   "Playback paused at timestamp:",
+      //   playbackStatus.currentTimestamp
+      // );
     } else {
       // autoplay
       const interval = setInterval(() => {
@@ -235,25 +234,25 @@ export default function PlaybackDisplay({ className }) {
     <div ref={displayRef}>
       <MenuButton
         className={clsx(
-          "bottom-4 right-4",
+          "bottom-4 right-4 z-50",
           isOpen ? "w-fit h-fit rounded-xl" : "w-12 h-12 rounded-full"
         )}
+        onClick={!isOpen ? () => setIsOpen(true) : undefined}
       >
+        {!isOpen && <span className="w-full h-full flex items-center justify-center text-xl">🕘</span>}
         {isOpen && (
-          <div className={clsx("flex flex-col min-w-[80vw] h-fit p-2 pb-16 max-w-[80vw] gap-2", className)}>
+          <div className={clsx("flex flex-col min-w-[80vw] h-fit p-2 pb-16 max-w-[80vw] gap-2", className)} onClick={(e) => e.stopPropagation()}>
             {/* <h3 className="text-white text-xl font-bold opacity-50 z-0">Dashboard</h3> */}
-            <div className="rounded-xl border border-white/20 bg-black/70 p-3">
-              <GraphDashboard embedded className="min-w-0 max-w-full h-[44vh]" />
-            </div>
             <div className="rounded-lg border border-white/10 bg-black/80 px-3 py-2 flex items-center gap-3">
               <button
                 type="button"
-                onClick={() =>
+                onClick={(e) => {
+                  e.stopPropagation();
                   setPlaybackStatus((prev) => ({
                     ...prev,
                     isPlaying: !prev.isPlaying,
-                  }))
-                }
+                  }));
+                }}
                 className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 transition text-white text-xs font-bold flex items-center justify-center"
                 aria-label={playbackStatus.isPlaying ? "Pause playback" : "Play playback"}
               >

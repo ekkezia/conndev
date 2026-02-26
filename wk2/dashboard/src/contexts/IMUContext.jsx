@@ -8,10 +8,12 @@ const IMUContext = createContext(null);
 
 export function IMUProvider({ children }) {
   const [connected, setConnected] = useState(false);
-  const [playbackMode, setPlaybackMode] = useState(false); // toggle open/close playback display
+  const [playbackMode, setPlaybackMode] = useState(false); // toggle false = drawing real time, / true = playback
   const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null, currentTimestamp: null, currentDataIdx: null, isPlaying: false }); // default to play, false for pause
   const [sensorData, setSensorData] = useState(mockSensorData);
   const [enableHelper, setEnableHelper] = useState(false);
+  const [showDotmap, setShowDotmap] = useState(false);
+  const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
 
   const updateSensor = useCallback((newSensor) => {
     setSensorData((s) => [...s.slice(-999), newSensor]);
@@ -27,6 +29,7 @@ export function IMUProvider({ children }) {
 
     socket.current.on('sensor-initial-data', (data) => setSensorData(data));
     socket.current.on('sensor-realtime-receive', (data) => setSensorData((prev) => [...prev, data].slice(-1000)));
+    socket.current.on('mouse-pos', (pos) => setMousePos(pos));
 
     return () => socket.current.disconnect();
   }, []);
@@ -43,6 +46,9 @@ export function IMUProvider({ children }) {
     setPlaybackStatus,
     enableHelper,
     setEnableHelper,
+    showDotmap,
+    setShowDotmap,
+    mousePos,
   };
 
   return <IMUContext.Provider value={value}>{children}</IMUContext.Provider>;

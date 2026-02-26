@@ -24,7 +24,7 @@ let sensorData = [];
 // ===============================
 // MOUSE CONTROL
 // ===============================
-let mouseEnabled = false;
+let mouseEnabled = true; // toggle here
 
 let smoothX = 0;
 let smoothY = 0;
@@ -46,48 +46,40 @@ function generateMockSensor() {
 }
 
 // Accepts sensor data in Arduino format:
-// { ax, ay, az, gx, gy, gz, heading, fwdHeading, calibrated }
-// Direction comes from fwdHeading; magnitude from sqrt(gx² + gy²).
-function moveMouseFromIMU(sensor) {
+// { ax, ay, az, gx, gy, gz, heading, fwdHeading, calibrated, posX, posY, mag }
+// posX/posY = heading direction unit vector [-1, 1] (sin/cos of heading) → direction
+// mag       = sqrt(gx² + gy²) gyro speed in deg/s                        → speed
+function moveMouseFromIMU(data) {
   if (!mouseEnabled) return;
-  if (sensor.gx === undefined || sensor.gy === undefined || sensor.fwdHeading === undefined) return;
+  console.log("moveMouseFromIMU called with data:", data);
+  if (data.posX === undefined || data.posY === undefined || data.mag === undefined) return;
 
-  const sensitivity = 0.15; // pixels per (deg/s) per tick
-  const alpha = 0.25;       // EMA smoothing factor
-  const threshold = 1.5;     // deg/s — ignore small jitter
+  const sensitivity = 0.15;   // pixels per (deg/s) per tick
+  const alpha = 0.25;         // EMA smoothing factor
+  const deadZone = 1.5;       // deg/s — ignore small jitter
 
-  // Magnitude: total angular velocity from gyroscope
-  const magnitude = Math.sqrt(sensor.gx ** 2 + sensor.gy ** 2);
-  const effectiveMag = magnitude < threshold ? 0 : magnitude;
+  const effectiveMag = data.mag < deadZone ? 0 : data.mag;
 
-  // Direction: unit vector from fwdHeading (degrees, 0 = up/north)
-  const headingRad = (sensor.fwdHeading * Math.PI) / 180;
-  const dirX = Math.sin(headingRad);   // screen right when heading = 90
-  const dirY = -Math.cos(headingRad);  // screen up   when heading = 0 (inverted Y)
-
-  smoothX = smoothX * (1 - alpha) + dirX * effectiveMag * alpha;
-  smoothY = smoothY * (1 - alpha) + dirY * effectiveMag * alpha;
+  // posX = sin(heading) → screen X (right = positive)
+  // posY = cos(heading) → negate for screen Y (up = negative screen Y)
+  smoothX = smoothX * (1 - alpha) + data.posX * effectiveMag * alpha;
+  smoothY = smoothY * (1 - alpha) + (-data.posY) * effectiveMag * alpha;
 
   const mouse = robot.getMousePos();
 
-  robot.moveMouse(
-    Math.round(mouse.x + smoothX * sensitivity),
-    Math.round(mouse.y + smoothY * sensitivity)
-  );
+  const newX = Math.round(mouse.x + smoothX * sensitivity);
+  const newY = Math.round(mouse.y + smoothY * sensitivity);
+  robot.moveMouse(newX, newY);
+
+  // Broadcast new mouse position to all dashboard clients
+  if (typeof io !== "undefined") {
+    io.emit("mouse-pos", { x: newX, y: newY });
+  }
 }
 
 // Run mock data through moveMouseFromIMU every 50 ms.
 // Toggle with the MOCK_MOUSE env var: MOCK_MOUSE=1 node server_mouse.js
-const MOCK_MOUSE = "1";
-if (MOCK_MOUSE === "1") {
-  mouseEnabled = true;
-  console.log("🧪 Mock mouse mode ENABLED — sending fake IMU data every 50 ms");
-  setInterval(() => {
-    const sensor = generateMockSensor();
-    console.log("🧪 Mock sensor:", sensor);
-    moveMouseFromIMU(sensor);
-  }, 50);
-}
+const MOCK_MOUSE = false; // 0
 
 // ===============================
 // REST
@@ -132,6 +124,26 @@ mqttClient.on("connect", () => {
       console.log("📥 Subscribed to topic:", MQTT_TOPIC);
     }
   });
+
+  // Start mock publishing once connected so the message flows through
+  // the real mqttClient.on("message") handler end-to-end.
+  if (MOCK_MOUSE) {
+    setInterval(() => {
+      const sensor = generateMockSensor();
+      const payload = JSON.stringify({
+        source: "mock-mqtt",
+        sensor: {
+          ...sensor,
+          posX: Math.sin(sensor.heading * Math.PI / 180),
+          posY: Math.cos(sensor.heading * Math.PI / 180),
+          mag: Math.sqrt(sensor.gx ** 2 + sensor.gy ** 2),
+        },
+        timestamp: Date.now(),
+      });
+      mqttClient.publish(MQTT_TOPIC, payload);
+      console.log("🧪 Mock MQTT publish:", payload);
+    }, 50);
+  }
 });
 
 mqttClient.on("message", (topic, message) => {
@@ -140,10 +152,16 @@ mqttClient.on("message", (topic, message) => {
     if (!parsed?.sensor) return;
 
     // 🔥 MOVE MOUSE HERE
-    moveMouseFromIMU(parsed.sensor);
+    const data = {
+      ...parsed.sensor,
+      posX: Math.sin(parsed.sensor.heading * Math.PI / 180),
+      posY: Math.cos(parsed.sensor.heading * Math.PI / 180),
+      mag: Math.sqrt(parsed.sensor.gx ** 2 + parsed.sensor.gy ** 2),
+    }
+    moveMouseFromIMU(data);
 
     const entry = {
-      sensor: parsed.sensor,
+      sensor: data,
       timestamp: parsed.timestamp || Date.now(),
       source: "mqtt",
     };
@@ -153,7 +171,7 @@ mqttClient.on("message", (topic, message) => {
 
     io.emit("sensor-realtime-receive", entry);
 
-    console.log("📡 Received sensor data from MQTT:", entry);
+    // console.log("📡 Received sensor data from MQTT:", entry);
   } catch (err) {
     console.error("MQTT message parse error:", err.message);
   }
@@ -207,10 +225,16 @@ const tcpServer = net.createServer((socket) => {
           if (parsed?.sensor) {
 
             // 🔥 MOVE MOUSE HERE
-            moveMouseFromIMU(parsed.sensor);
+            const data = {
+              ...parsed.sensor,
+              posX: Math.sin(parsed.sensor.heading * Math.PI / 180),
+              posY: Math.cos(parsed.sensor.heading * Math.PI / 180),
+              mag: Math.sqrt(parsed.sensor.gx ** 2 + parsed.sensor.gy ** 2),
+            };
+            moveMouseFromIMU(data);
 
             const entry = {
-              sensor: parsed.sensor,
+              sensor: data,
               timestamp: parsed.timestamp || Date.now(),
               source: "tcp",
             };
@@ -266,10 +290,17 @@ io.on("connection", (socket) => {
   socket.on("sensor-realtime-send", (data) => {
     if (!data?.sensor) return;
 
-    moveMouseFromIMU(data.sensor);
+    const sensorData_internal = {
+      ...data.sensor,
+      posX: Math.sin(data.sensor.heading * Math.PI / 180),
+      posY: Math.cos(data.sensor.heading * Math.PI / 180),
+      mag: Math.sqrt(data.sensor.gx ** 2 + data.sensor.gy ** 2),
+    };
+    moveMouseFromIMU(sensorData_internal);
 
     const entry = {
       ...data,
+      sensor: sensorData_internal,
       timestamp: data.timestamp || Date.now(),
       source: "socket",
     };
