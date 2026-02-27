@@ -43,7 +43,7 @@ export default function GraphDashboard({ className, embedded = false }) {
                     const mappedSensor = kind === 'gyro'
                         ? mapValue(raw, -180, 180, -50, 50)
                         : kind === 'accel' ? mapValue(raw, -2, 2, -50, 50) : 
-                        kind === 'magneto' ? mapValue(raw, 0, 360, -50, 50) : 0;
+                        kind === 'heading' ? mapValue(raw, 0, 360, -50, 50) : 0;
                     return (
                         <div
                             key={`${timestamp}-${idx}`}
@@ -106,9 +106,9 @@ export default function GraphDashboard({ className, embedded = false }) {
             <SensorGraph keyName="az" color="bg-blue-500/50" kind="accel" />
           </>
         )}
-        {(mode === 'magneto') && (
+        {(mode === 'mag') && (
           <>
-            <SensorGraph keyName="heading" color="bg-red-500/50" kind="magneto" />
+            <SensorGraph keyName="heading" color="bg-red-500/50" kind="heading" />
           </>
         )}
 
@@ -131,7 +131,7 @@ export default function GraphDashboard({ className, embedded = false }) {
                 <span className="font-mono">Gyro: (X: {s.gx?.toFixed(2) || 'N/A'}, Y: {s.gy?.toFixed(2) || 'N/A'}, Z: {s.gz?.toFixed(2) || 'N/A'})</span>
               ) : (mode === 'accel') ? (
                 <span className="font-mono">Accel: (X: {s.ax?.toFixed(2) || 'N/A'}, Y: {s.ay?.toFixed(2) || 'N/A'}, Z: {s.az?.toFixed(2) || 'N/A'})</span>
-              ) : (mode === 'magneto') ? (
+              ) : (mode === 'mag') ? (
                 <span className="font-mono">Magneto: Heading: {s.heading?.toFixed(2) || 'N/A'}</span>
               ) : null}
             </div>

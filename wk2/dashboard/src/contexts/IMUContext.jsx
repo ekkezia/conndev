@@ -7,7 +7,7 @@ import { mockSensorData } from '../components/mock-data';
 const IMUContext = createContext(null);
 
 export function IMUProvider({ children }) {
-  const [connected, setConnected] = useState(false);
+  const [mouseEnabled, setMouseEnabled] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(false); // toggle false = drawing real time, / true = playback
   const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null, currentTimestamp: null, currentDataIdx: null, isPlaying: false }); // default to play, false for pause
   const [sensorData, setSensorData] = useState(mockSensorData);
@@ -19,8 +19,8 @@ export function IMUProvider({ children }) {
     setSensorData((s) => [...s.slice(-999), newSensor]);
   }, []);
 
-  const connect = useCallback(() => setConnected(true), []);
-  const disconnect = useCallback(() => setConnected(false), []);
+  const enableMouse = useCallback(() => setMouseEnabled(true), []);
+  const disableMouse = useCallback(() => setMouseEnabled(false), []);
   
   const socket = useRef(null);
 
@@ -30,15 +30,16 @@ export function IMUProvider({ children }) {
     socket.current.on('sensor-initial-data', (data) => setSensorData(data));
     socket.current.on('sensor-realtime-receive', (data) => setSensorData((prev) => [...prev, data].slice(-1000)));
     socket.current.on('mouse-pos', (pos) => setMousePos(pos));
+    socket.current.on('sensor-power', (data) => setMouseEnabled(data.connected));
 
     return () => socket.current.disconnect();
   }, []);
 
   const value = {
-    connected,
+    mouseEnabled,
     sensorData,
-    connect,
-    disconnect,
+    enableMouse,
+    disableMouse,
     updateSensor,
     playbackMode,
     setPlaybackMode,

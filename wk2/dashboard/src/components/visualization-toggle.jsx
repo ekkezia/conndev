@@ -45,6 +45,7 @@ function DotmapToggle() {
 
 export default function VisualizationToggle({ isOpen, onClose, status }) {
   const displayRef = useRef(null);
+  const { mouseEnabled } = useIMU();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -71,6 +72,7 @@ export default function VisualizationToggle({ isOpen, onClose, status }) {
         <div className="border-t border-white/10 pt-2 flex items-center justify-center gap-2 text-xs">
           <span className="text-xl">{status === 'connected' ? '🔗' : '⛓️‍💥'}</span>
           <span className="text-white/70">{status}</span>
+          <span className={mouseEnabled ? "text-sm" : "text-sm line-through"}>{mouseEnabled ? 'Mouse Connected' : 'Mouse Disconnected'}</span>
         </div>
       </div>
     )

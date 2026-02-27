@@ -8,11 +8,9 @@ import VisualizationToggle from './components/visualization-toggle';
 import { useRef, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { SERVER_URL } from './config';
-import UserDisplay from './components/user-display';
 import DrawingDisplay from './components/drawing-display';
 
 function App() {
-  const { playbackMode, setPlaybackMode } = useIMU();
   const [mode, setMode] = useState(false); // false = drawing, true = light
   const [showVisualizationToggle, setShowVisualizationToggle] = useState(false);
 

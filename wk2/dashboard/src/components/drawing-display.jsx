@@ -20,7 +20,9 @@ export default function DrawingDisplay({ className }) {
   const playbackPosRef = useRef(null);
   const playbackPrevRef = useRef(null);
 
-  const { sensorData, playbackMode, playbackStatus, enableHelper } = useIMU();
+  const { sensorData, playbackMode, playbackStatus, enableHelper, mousePos } = useIMU();
+  const mouseDotRef = useRef(null);
+  const mousePathRef = useRef(null); // persistent paper.Path for the mouse trail
   const [drawState, setDrawState] = useState(true); // todo: change later
 
   // =================================================
@@ -176,6 +178,8 @@ export default function DrawingDisplay({ className }) {
 
     return () => {
       paper.project.clear();
+      mouseDotRef.current = null;
+      mousePathRef.current = null;
     };
   }, []);
 
@@ -194,20 +198,12 @@ export default function DrawingDisplay({ className }) {
   // =================================================
   // GENERIC DRAW FUNCTION
   // =================================================
-  function drawLine(posX, posY, mag, layer, posRef, prevRef, opacity = 1) {
+  function drawLine(mouseTargetX, mouseTargetY, mag, layer, posRef, prevRef, opacity = 1) {
     if (!layer || !posRef.current || !prevRef.current) return;
 
     layer.activate();
 
     const pos = posRef.current;
-
-    // Reset to canvas center if pos got corrupted (NaN from stale Paper.js ref or bad frame)
-    if (!isFinite(pos.x) || !isFinite(pos.y)) {
-      console.warn("pos NaN detected — resetting to center");
-      pos.x = paper.view.size.width / 2;
-      pos.y = paper.view.size.height / 2;
-      prevRef.current = pos.clone();
-    }
 
     const prevPos = prevRef.current.clone();
 
@@ -215,10 +211,10 @@ export default function DrawingDisplay({ className }) {
     // mag controls step size and stroke width
     const NORMALIZE_MAG = 0.01;
 
-    pos.x += posX * mag * NORMALIZE_MAG * UNIT;
-    pos.y -= posY * mag * NORMALIZE_MAG * UNIT;
+    pos.x += mouseTargetX * mag * NORMALIZE_MAG * UNIT;
+    pos.y -= mouseTargetY * mag * NORMALIZE_MAG * UNIT;
 
-    console.log('sensor', pos, posX, posY, mag);
+    console.log('sensor', pos, mouseTargetX, mouseTargetY, mag);
 
     pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
     pos.y = Math.max(0, Math.min(pos.y, paper.view.size.height));
@@ -264,17 +260,59 @@ export default function DrawingDisplay({ className }) {
     const s = sensorData?.[sensorData.length - 1];
     if (!s?.sensor) return;
 
-    const { posX, posY, mag } = s.sensor;
+    const { mouseTargetX, mouseTargetY, mag } = s.sensor;
 
     drawLine(
-      posX,
-      posY,
+      mouseTargetX,
+      mouseTargetY,
       mag,
       realtimeLayerRef.current,
       realtimePosRef,
       realtimePrevRef
     );
   }, [sensorData, playbackMode]);
+
+  // =================================================
+  // MOUSE POSITION CURSOR — maps screen coords to canvas
+  // =================================================
+  useEffect(() => {
+    if (!mousePos || !realtimeLayerRef.current) return;
+
+    const canvasWidth = paper.view.size.width;
+    const canvasHeight = paper.view.size.height;
+    const screenW = window.screen.width;
+    const screenH = window.screen.height;
+
+    const canvasX = (mousePos.x / screenW) * canvasWidth;
+    const canvasY = (mousePos.y / screenH) * canvasHeight;
+
+    realtimeLayerRef.current.activate();
+
+    const pt = new paper.Point(canvasX, canvasY);
+
+    // Draw a small filled dot at this position (same technique as playback which works)
+    new paper.Path.Circle({
+      center: pt,
+      radius: 2.5,
+      fillColor: new paper.Color(1, 0, 1, 0.8), // fuchsia
+    });
+
+    // Update or create the yellow cursor dot (always on top)
+    if (!mouseDotRef.current) {
+      mouseDotRef.current = new paper.Path.Circle({
+        center: pt,
+        radius: 6,
+        fillColor: new paper.Color(1, 1, 0, 0.9), // yellow
+        strokeColor: new paper.Color(1, 1, 1, 0.6),
+        strokeWidth: 1.5,
+      });
+    } else {
+      mouseDotRef.current.position = pt;
+    }
+    mouseDotRef.current.bringToFront();
+
+    paper.view.draw();
+  }, [mousePos]);
 
   // Helper function to convert HSL to RGB
   function hslToRgb(h, s, l) {
@@ -311,9 +349,9 @@ export default function DrawingDisplay({ className }) {
       const s = sensorData[i];
       if (!s?.sensor) continue;
 
-      const { posX, posY, mag } = s.sensor;
-      pos.x += posX * mag * NORMALIZE_MAG * UNIT;
-      pos.y -= posY * mag * NORMALIZE_MAG * UNIT;
+      const { mouseTargetX, mouseTargetY, mag } = s.sensor;
+      pos.x += mouseTargetX * mag * NORMALIZE_MAG * UNIT;
+      pos.y -= mouseTargetY * mag * NORMALIZE_MAG * UNIT;
       pos.x = Math.max(0, Math.min(pos.x, width));
       pos.y = Math.max(0, Math.min(pos.y, height));
 
@@ -331,9 +369,9 @@ export default function DrawingDisplay({ className }) {
       const s = sensorData[i];
       if (!s?.sensor) continue;
 
-      const { posX, posY, mag } = s.sensor;
-      pos.x += posX * mag * NORMALIZE_MAG * UNIT;
-      pos.y -= posY * mag * NORMALIZE_MAG * UNIT;
+      const { mouseTargetX, mouseTargetY, mag } = s.sensor;
+      pos.x += mouseTargetX * mag * NORMALIZE_MAG * UNIT;
+      pos.y -= mouseTargetY * mag * NORMALIZE_MAG * UNIT;
       pos.x = Math.max(0, Math.min(pos.x, width));
       pos.y = Math.max(0, Math.min(pos.y, height));
 
@@ -366,6 +404,11 @@ export default function DrawingDisplay({ className }) {
         resize="true"
         className="w-full h-full bg-gray-400"
       />
+      {mousePos && (
+        <div className="absolute top-2 right-2 bg-black/60 text-yellow-300 font-mono text-xs px-2 py-1 rounded pointer-events-none">
+          🖱 x: {mousePos.x} y: {mousePos.y}
+        </div>
+      )}
     </div>
   );
 }
