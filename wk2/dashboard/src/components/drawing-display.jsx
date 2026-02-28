@@ -20,9 +20,9 @@ export default function DrawingDisplay({ className }) {
   const playbackPosRef = useRef(null);
   const playbackPrevRef = useRef(null);
 
-  const { sensorData, playbackMode, playbackStatus, enableHelper, mousePos } = useIMU();
+  const { sensorData, playbackMode, playbackStatus, enableHelper, mousePos, clear, setClear } = useIMU();
   const mouseDotRef = useRef(null);
-  const mousePathRef = useRef(null); // persistent paper.Path for the mouse trail
+  const mousePathRef = useRef(null); // persistent paper.Path for no the mouse trail
   const [drawState, setDrawState] = useState(true); // todo: change later
 
   // =================================================
@@ -189,6 +189,20 @@ export default function DrawingDisplay({ className }) {
     paper.view.draw();
   }, [enableHelper]);
 
+  // =================================================
+  // CLEAR REALTIME CANVAS
+  // =================================================
+  useEffect(() => {
+    if (!clear || !realtimeLayerRef.current) return;
+
+    realtimeLayerRef.current.removeChildren();
+    mouseDotRef.current = null;
+    paper.view.draw();
+
+    const timer = setTimeout(() => setClear(false), 300);
+    return () => clearTimeout(timer);
+  }, [clear]);
+
   useEffect(() => {
     if (!playbackLayerRef.current) return;
     playbackLayerRef.current.visible = playbackMode;
@@ -197,27 +211,19 @@ export default function DrawingDisplay({ className }) {
 
   // =================================================
   // GENERIC DRAW FUNCTION
+  // canvasX/canvasY are already mapped to canvas coordinate space
   // =================================================
-  function drawLine(mouseTargetX, mouseTargetY, mag, layer, posRef, prevRef, opacity = 1) {
+  function drawLine(canvasX, canvasY, mag, layer, posRef, prevRef, opacity = 1) {
     if (!layer || !posRef.current || !prevRef.current) return;
+    if (isNaN(canvasX) || isNaN(canvasY)) return;
 
     layer.activate();
 
-    const pos = posRef.current;
-
     const prevPos = prevRef.current.clone();
-
-    // posX = sin(heading), posY = cos(heading) — unit vectors in [-1, 1]
-    // mag controls step size and stroke width
-    const NORMALIZE_MAG = 0.01;
-
-    pos.x += mouseTargetX * mag * NORMALIZE_MAG * UNIT;
-    pos.y -= mouseTargetY * mag * NORMALIZE_MAG * UNIT;
-
-    console.log('sensor', pos, mouseTargetX, mouseTargetY, mag);
-
-    pos.x = Math.max(0, Math.min(pos.x, paper.view.size.width));
-    pos.y = Math.max(0, Math.min(pos.y, paper.view.size.height));
+    const pos = new paper.Point(
+      Math.max(0, Math.min(canvasX, paper.view.size.width)),
+      Math.max(0, Math.min(canvasY, paper.view.size.height))
+    );
 
     const motion = mag;
     const maxMotion = 40;
@@ -252,24 +258,24 @@ export default function DrawingDisplay({ className }) {
   }
 
   // =================================================
-  // REALTIME MODE — draws using posX and posY from sensor data
+  // REALTIME MODE — maps screen coords to canvas and draws
   // =================================================
   useEffect(() => {
     if (playbackMode || !sensorData || !realtimeLayerRef.current) return;
 
     const s = sensorData?.[sensorData.length - 1];
-    if (!s?.sensor) return;
+    if (!s?.sensor || !s?.screenSize) return;
 
     const { mouseTargetX, mouseTargetY, mag } = s.sensor;
+    const { width: screenW, height: screenH } = s.screenSize;
+    if (!screenW || !screenH) return;
 
-    drawLine(
-      mouseTargetX,
-      mouseTargetY,
-      mag,
-      realtimeLayerRef.current,
-      realtimePosRef,
-      realtimePrevRef
-    );
+    const canvasW = paper.view.size.width;
+    const canvasH = paper.view.size.height;
+    const canvasX = (mouseTargetX / screenW) * canvasW;
+    const canvasY = (mouseTargetY / screenH) * canvasH;
+
+    drawLine(canvasX, canvasY, mag, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
   }, [sensorData, playbackMode]);
 
   // =================================================
@@ -342,20 +348,28 @@ export default function DrawingDisplay({ className }) {
     // First pass: count visits per grid cell for heatmap
     const cellSize = 8;
     const heatmapGrid = {};
-    let pos = center.clone();
-    const NORMALIZE_MAG = 0.01;
+
+    const computePos = (mouseTargetX, mouseTargetY, screenW, screenH) => {
+      if (!screenW || !screenH) return null;
+      const x = Math.max(0, Math.min((mouseTargetX / screenW) * width, width));
+      const y = Math.max(0, Math.min((mouseTargetY / screenH) * height, height));
+      if (isNaN(x) || isNaN(y)) return null;
+      return { x, y };
+    };
 
     for (let i = 0; i <= maxIdx; i++) {
       const s = sensorData[i];
-      if (!s?.sensor) continue;
+      if (!s?.sensor || !s?.screenSize) continue;
 
       const { mouseTargetX, mouseTargetY, mag } = s.sensor;
-      pos.x += mouseTargetX * mag * NORMALIZE_MAG * UNIT;
-      pos.y -= mouseTargetY * mag * NORMALIZE_MAG * UNIT;
-      pos.x = Math.max(0, Math.min(pos.x, width));
-      pos.y = Math.max(0, Math.min(pos.y, height));
+      const { width: screenW, height: screenH } = s.screenSize;
+      if (mouseTargetX == null || mouseTargetY == null || mag == null) continue;
 
-      const gridKey = `${Math.floor(pos.x / cellSize)},${Math.floor(pos.y / cellSize)}`;
+      const result = computePos(mouseTargetX, mouseTargetY, screenW, screenH);
+      if (!result) continue;
+      const { x, y } = result;
+
+      const gridKey = `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
       heatmapGrid[gridKey] = (heatmapGrid[gridKey] || 0) + 1;
     }
 
@@ -363,17 +377,21 @@ export default function DrawingDisplay({ className }) {
 
     // Second pass: draw dots with heatmap colors
     playbackLayerRef.current.activate();
-    pos = center.clone();
+    let lastPos = center.clone();
 
     for (let i = 0; i <= maxIdx; i++) {
       const s = sensorData[i];
-      if (!s?.sensor) continue;
+      if (!s?.sensor || !s?.screenSize) continue;
 
       const { mouseTargetX, mouseTargetY, mag } = s.sensor;
-      pos.x += mouseTargetX * mag * NORMALIZE_MAG * UNIT;
-      pos.y -= mouseTargetY * mag * NORMALIZE_MAG * UNIT;
-      pos.x = Math.max(0, Math.min(pos.x, width));
-      pos.y = Math.max(0, Math.min(pos.y, height));
+      const { width: screenW, height: screenH } = s.screenSize;
+      if (mouseTargetX == null || mouseTargetY == null || mag == null) continue;
+
+      const result = computePos(mouseTargetX, mouseTargetY, screenW, screenH);
+      if (!result) continue;
+      const { x, y } = result;
+
+      const pos = new paper.Point(x, y);
 
       const gridKey = `${Math.floor(pos.x / cellSize)},${Math.floor(pos.y / cellSize)}`;
       const visits = heatmapGrid[gridKey] || 1;
@@ -391,9 +409,10 @@ export default function DrawingDisplay({ className }) {
         radius: 4,
         fillColor: new paper.Color(r, g, b, 0.6),
       });
+      lastPos = pos;
     }
 
-    playbackPosRef.current = pos.clone();
+    playbackPosRef.current = lastPos.clone();
     paper.view.draw();
   }, [playbackMode, playbackStatus.currentDataIdx, sensorData]);
 

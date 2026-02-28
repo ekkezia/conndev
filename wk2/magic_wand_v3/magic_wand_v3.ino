@@ -15,7 +15,8 @@ int resetButtonPin = 11;
 int calibrateLedPin = 6;
 int powerLedPin = 8;
 
-const unsigned long holdTime = 1000;
+const unsigned long longPressTime = 1000;
+const unsigned long shortPressTime = 10; // 10-110 ms
 
 unsigned long calPressStart = 0;
 bool calPressed = false;
@@ -30,6 +31,11 @@ bool systemPaused = false;
 // ================= CALIBRATION =================
 bool calibrationRunning = false;
 bool ledState = false;
+
+// ================ CONTROL
+bool ctrlPower = false;
+bool ctrlClick = false;
+bool ctrlClear = false;
 
 // ================= WIFI + MQTT =================
 WiFiClient wifi;
@@ -52,13 +58,7 @@ unsigned long lastSend=0;
 float ax,ay,az,gx,gy,gz;
 Adafruit_LSM303_Mag_Unified mag(12345);
 
-float heading;
-float forwardHeading=0;
 bool isCalibrated=false;
-
-float lastHeading=0;
-float continuousHeading=0;
-bool firstHeading=true;
 
 // =================================================
 
@@ -66,11 +66,11 @@ void setup(){
 
   Serial.begin(115200);
 
-  pinMode(calibrateButtonPin,INPUT_PULLUP);
-  pinMode(resetButtonPin,INPUT_PULLUP);
+  pinMode(calibrateButtonPin,INPUT_PULLUP); // yellow
+  pinMode(resetButtonPin,INPUT_PULLUP); // red
 
-  pinMode(calibrateLedPin,OUTPUT);
-  pinMode(powerLedPin,OUTPUT);
+  pinMode(calibrateLedPin,OUTPUT); // red
+  pinMode(powerLedPin,OUTPUT); // white
 
   connectToNetwork();
 
@@ -102,7 +102,7 @@ void loop(){
     connectToBroker();
 
   // ===== CALIBRATE BUTTON =====
-  if(digitalRead(calibrateButtonPin)==LOW){
+  if(digitalRead(calibrateButtonPin)==LOW){ // calibrate button is pressed
 
     if(!calPressed){
       calPressStart=millis();
@@ -111,13 +111,12 @@ void loop(){
     }
 
     if(!calibrateTriggered &&
-       millis()-calPressStart>=holdTime){
+       millis()-calPressStart>=longPressTime){
 
       Serial.println("CALIBRATION START");
 
       systemPaused=false;
       isCalibrated=false;
-      firstHeading=true;
 
       calibrationRunning=true;
       calibrateTriggered=true;
@@ -125,14 +124,12 @@ void loop(){
       digitalWrite(calibrateLedPin, HIGH);
       digitalWrite(powerLedPin, LOW);
 
-      mqttClient.beginMessage("kezia/imu/power");
-      mqttClient.print("{\"power\":true}");
-      mqttClient.endMessage();
+      setPower(true);
     }
 
-  }else calPressed=false;
+  } else calPressed=false;
 
-  // ===== RESET BUTTON =====
+  // ===== RESET BUTTON ===== 
   if(digitalRead(resetButtonPin)==LOW){
 
     if(!resetPressed){
@@ -142,22 +139,19 @@ void loop(){
     }
 
     if(!resetTriggered &&
-       millis()-resetPressStart>=holdTime){
+       millis()-resetPressStart>=longPressTime){
 
       Serial.println("SYSTEM RESET");
 
       digitalWrite(calibrateLedPin,LOW);
       digitalWrite(powerLedPin,LOW);
-      systemPaused=true;
+      systemPaused=true; // pause sensor readings
 
-      mqttClient.beginMessage("kezia/imu/power");
-      mqttClient.print("{\"power\":false}");
-      mqttClient.endMessage();
+      setPower(false);
 
       resetTriggered=true;
     }
-
-  }else resetPressed=false;
+  } else resetPressed=false;
 
   if(systemPaused) return;
 
@@ -166,57 +160,56 @@ void loop(){
 
     lastSend=now;
 
-    // ---------- MAG ----------
-    sensors_event_t event;
-    mag.getEvent(&event);
+    // ---------- READ ACCEL ----------
+    if (IMU.accelerationAvailable())
+      IMU.readAcceleration(ax, ay, az);
 
-    heading=
-      atan2(event.magnetic.y,
-            event.magnetic.x)*180/M_PI;
+    // ---------- GYRO ----------
+    if(IMU.gyroscopeAvailable())
+      IMU.readGyroscope(gx,gy,gz);
+    
+    // ---------- COMPUTE TILT ----------
+    float roll  = atan2(ay, az);
+    float pitch = atan(-ax / sqrt(ay*ay + az*az));
 
     // ===== CALIBRATION =====
+    // TODO: change CALIBRATION to POWER
     if(calibrationRunning){
-
-      digitalWrite(powerLedPin, HIGH);
-
-      forwardHeading=heading;
 
       calibrationRunning=false;
       isCalibrated=true;
 
       digitalWrite(calibrateLedPin,LOW);
-      digitalWrite(powerLedPin, HIGH);
+      digitalWrite(powerLedPin, HIGH); // turn "power" high to signify calibration is done and user can start drawing
 
       Serial.println("CALIBRATION DONE");
+
     }
 
-    if(isCalibrated)
-      heading-=forwardHeading;
+    if(isCalibrated) {
+      // CONTROL: Click
+      if(millis()-calPressStart>=shortPressTime && millis()-calPressStart<shortPressTime+100){
 
-    if(heading>180) heading-=360;
-    if(heading<-180) heading+=360;
+      Serial.println("[CLICK]"); // only allow clicking after calibration (whe power is fully ON)
 
-    // ===== CONTINUOUS HEADING =====
-    if(firstHeading){
-      lastHeading=heading;
-      continuousHeading=heading;
-      firstHeading=false;
-    }else{
-      float delta=heading-lastHeading;
-      if(delta>180) delta-=360;
-      if(delta<-180) delta+=360;
+      digitalWrite(powerLedPin, LOW); // for now we make it go low->high bcs the power indicator is always ON usually (if user is on and done calibrating)
+      delay(50);
+      digitalWrite(powerLedPin, HIGH);
 
-      continuousHeading+=delta;
-      lastHeading=heading;
+      pulseClick();
     }
 
-    // ---------- ACCEL ----------
-    if(IMU.accelerationAvailable())
-      IMU.readAcceleration(ax,ay,az);
+    // CONTROL: Clear Canvas
+    if(millis()-resetPressStart>=shortPressTime && millis()-resetPressStart<shortPressTime+100){
+      Serial.println("[CLEAR CANVAS]");
 
-    // ---------- GYRO ----------
-    if(IMU.gyroscopeAvailable())
-      IMU.readGyroscope(gx,gy,gz);
+      digitalWrite(calibrateLedPin, HIGH); // for now we make it go low->high bcs the power indicator is always ON usually (if user is on and done calibrating)
+      delay(50);
+      digitalWrite(calibrateLedPin, LOW);
+
+      pulseClear();
+    }
+  }
 
     // ================= MQTT =================
     if(mqttClient.connected() && isCalibrated){
@@ -235,8 +228,8 @@ void loop(){
       mqttClient.print("\"gy\":");mqttClient.print(gy);mqttClient.print(",");
       mqttClient.print("\"gz\":");mqttClient.print(gz);mqttClient.print(",");
 
-      mqttClient.print("\"heading\":");
-      mqttClient.print(continuousHeading);
+      mqttClient.print("\"pitch\":");
+      mqttClient.print(pitch * 180.0 / PI);
       mqttClient.print(",");
 
       mqttClient.print("\"calibrated\":true}");
@@ -248,6 +241,9 @@ void loop(){
       mqttClient.endMessage();
     }
   }
+
+    // Serial.println(heading);
+
 }
 
 // =================================================
@@ -261,4 +257,43 @@ void connectToNetwork(){
 
 boolean connectToBroker(){
   return mqttClient.connect(broker,port);
+}
+
+// MQTT Configs
+void pulseClick() {
+  ctrlClick = true;
+  publishControl();
+  ctrlClick = false; // toggle back to false
+  publishControl();
+}
+
+void pulseClear() {
+  ctrlClear = true;
+  publishControl();
+  ctrlClear = false; // toggle back to false
+  publishControl();
+}
+
+void setPower(bool state) {
+  ctrlPower = state;
+  publishControl();
+}
+
+void publishControl() {
+
+  if (!mqttClient.connected()) return;
+
+  mqttClient.beginMessage("kezia/imu/control");
+
+  mqttClient.print("{\"power\":");
+  mqttClient.print(ctrlPower ? "true":"false");
+  mqttClient.print(",\"click\":");
+  mqttClient.print(ctrlClick ? "true":"false");
+  mqttClient.print(",\"clear\":");
+  mqttClient.print(ctrlClear ? "true":"false");
+  mqttClient.print("}");
+
+  mqttClient.endMessage();
+
+    // delay(10);
 }

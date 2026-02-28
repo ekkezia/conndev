@@ -14,6 +14,7 @@ export function IMUProvider({ children }) {
   const [enableHelper, setEnableHelper] = useState(false);
   const [showDotmap, setShowDotmap] = useState(false);
   const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
+  const [clear, setClear] = useState(false);
 
   const updateSensor = useCallback((newSensor) => {
     setSensorData((s) => [...s.slice(-999), newSensor]);
@@ -30,7 +31,8 @@ export function IMUProvider({ children }) {
     socket.current.on('sensor-initial-data', (data) => setSensorData(data));
     socket.current.on('sensor-realtime-receive', (data) => setSensorData((prev) => [...prev, data].slice(-1000)));
     socket.current.on('mouse-pos', (pos) => setMousePos(pos));
-    socket.current.on('sensor-power', (data) => setMouseEnabled(data.connected));
+    socket.current.on('sensor-power', (data) => setMouseEnabled(data.power));
+    socket.current.on('sensor-clear', (data) => setClear(true));
 
     return () => socket.current.disconnect();
   }, []);
@@ -50,6 +52,8 @@ export function IMUProvider({ children }) {
     showDotmap,
     setShowDotmap,
     mousePos,
+    clear,
+    setClear
   };
 
   return <IMUContext.Provider value={value}>{children}</IMUContext.Provider>;

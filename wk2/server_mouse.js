@@ -12,6 +12,11 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const robot = require("robotjs");
+const { spawn } = require("child_process");
+
+function playClickSound() {
+  spawn("afplay", ["/System/Library/Sounds/Tink.aiff"], { detached: true, stdio: "ignore" }).unref();
+}
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -26,6 +31,11 @@ let sensorData = [];
 // Toggle with the MOCK_MOUSE env var: MOCK_MOUSE=1 node server_mouse.js
 const MOCK_MOUSE = false; // 0
 let mouseEnabled = true; // toggle here
+
+  const ROT_GAIN = 0.35;
+  const TILT_GAIN = 3.5;
+  const DEAD_ZONE = 1.2;
+  let lastPitch = null;
 
 // Toggle mouseEnabled with spacebar in the terminal
 const readline = require("readline");
@@ -57,9 +67,6 @@ setInterval(() => {
   if (typeof io !== "undefined") io.emit("mouse-pos", { x: nx, y: ny });
 }, 1000 / 60);
 
-const SENSITIVITY = 6;   // pixels per unit — tune this
-const DEAD_ZONE = 1.5;   // deg/s — ignore small jitter
-
 // Processes raw sensor payload, updates mouse lerp target, and returns a
 // structured entry ready to be stored and emitted to clients.
 // Returns null if the payload has no sensor field.
@@ -69,10 +76,11 @@ function processSensorData(parsed, source = "mqtt") {
   const data = parsed.sensor;
 
   // derive movement fields from raw sensor
-  const posX = Math.sin(data.heading * Math.PI / 180);
-  const posY = Math.cos(data.heading * Math.PI / 180);
+  // const posX = Math.sin(data.heading * Math.PI / 180);
+  // const posY = Math.cos(data.heading * Math.PI / 180);
   const mag  = Math.sqrt(data.gx ** 2 + data.gy ** 2);
-  const effectiveMag = mag < DEAD_ZONE ? 0 : mag;
+  const CONSTANT_MAG = 10; // hardcode mag for now because it is quiet unstable
+  const effectiveMag = mag < DEAD_ZONE ? 0 : CONSTANT_MAG;
 
   const { width: screenW, height: screenH } = robot.getScreenSize();
 
@@ -86,16 +94,53 @@ function processSensorData(parsed, source = "mqtt") {
   }
 
   // advance target by sensor delta and clamp to screen bounds
-  targetX = Math.max(0, Math.min(targetX + posX * effectiveMag * SENSITIVITY * 0.1, screenW - 1));
-  targetY = Math.max(0, Math.min(targetY - posY * effectiveMag * SENSITIVITY * 0.1, screenH - 1));
+  // targetX = Math.max(0, Math.min(targetX + posX * effectiveMag * SENSITIVITY , screenW - 1));
+  // targetY = Math.max(0, Math.min(targetY - posY * effectiveMag * SENSITIVITY , screenH - 1));
+
+  // horizontal motion from rotation speed
+  // ===== MOTION =====
+
+/// ===== HORIZONTAL (gyro) =====
+const moveX =
+  Math.abs(data.gz) < DEAD_ZONE
+    ? 0
+    : -data.gz * ROT_GAIN;
+
+
+// ===== VERTICAL (tilt delta) =====
+let moveY = 0;
+
+if (lastPitch === null)
+  lastPitch = data.pitch;
+
+const pitchDelta = data.pitch - lastPitch;
+
+moveY =
+  Math.abs(pitchDelta) < 0.15
+    ? 0
+    : -pitchDelta * TILT_GAIN;
+
+lastPitch = data.pitch;
+
+
+// ===== APPLY + CLAMP =====
+targetX = Math.max(
+  0,
+  Math.min(targetX + moveX, screenW - 1)
+);
+
+targetY = Math.max(
+  0,
+  Math.min(targetY + moveY, screenH - 1)
+);
 
   // Sensor Data Shape from Arduino will be just ...data
   // We process the rest here in the server
   return {
     sensor: {
       ...data,          // gx, gy, ax, ay, heading, fwdHeading, calibrated
-      posX,             // sin(heading) — direction X
-      posY,             // cos(heading) — direction Y
+      // posX,             // sin(heading) — direction X
+      // posY,             // cos(heading) — direction Y
       mag,              // gyro speed magnitude
       mouseTargetX: targetX,  // absolute mouse target X in screen coords
       mouseTargetY: targetY,  // absolute mouse target Y in screen coords
@@ -135,7 +180,7 @@ const MQTT_BROKER =
 const MQTT_TOPIC = "kezia/imu/"; // subtopic = data or power
 const MQTT_SUBTOPIC = {
   DATA: "data",
-  POWER: "power",
+  CONTROL: "control", // power, clear, click
 }
 
 const mqttClient = mqtt.connect(MQTT_BROKER, {
@@ -167,7 +212,7 @@ mqttClient.on("connect", () => {
       if (sensorData.length >= 1000) sensorData.shift();
       sensorData.push(entry);
 
-      console.log("📡 MQTT sensor data:", entry);
+      console.log("📡 MQTT sensor data:", entry.sensor.pitch);
 
       // emit to socket so frontend can update in real time
       io.emit("sensor-realtime-receive", entry);
@@ -176,30 +221,40 @@ mqttClient.on("connect", () => {
       }
     }
 
-    // Subtopic = power
-    if (topic.includes(MQTT_SUBTOPIC.POWER)) {
-      const powerMsg = message.toString();
-      console.log("⚡ MQTT power message:", powerMsg);
+    // Subtopic = control
+    if (topic.includes(MQTT_SUBTOPIC.CONTROL)) {
+      let parsed;
       try {
-        const parsed = JSON.parse(powerMsg);
-        if (parsed.power === false) {
-          mouseEnabled = false;
-          console.log("🖱 Mouse control: DISABLED (power off)");
-        } else if (parsed.power === true) {
-          mouseEnabled = true;
-          console.log("🖱 Mouse control: ENABLED (power on)");
-        }
+        parsed = JSON.parse(message.toString());
+      } catch (err) {
+        console.error("Control message parse error:", err.message);
+        return;
+      }
+
+      console.log("🎮 MQTT control message:", parsed);
+
+      // --- power ---
+      if (parsed.power !== undefined) { 
+        mouseEnabled = parsed.power === true;
+        console.log(`🖱 Mouse control: ${mouseEnabled ? "ENABLED" : "DISABLED"} (power)`);
         io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
-      } catch (err)  {
-        // plain string fallback
-        if (powerMsg === "false") {
-          mouseEnabled = false;
-          console.log("🖱 Mouse control: DISABLED (power off)");
-        } else if (powerMsg === "true") {
-          mouseEnabled = true;
-          console.log("🖱 Mouse control: ENABLED (power on)");
+      }
+
+      // --- click ---
+      if (parsed.click === true) {
+        try {
+          robot.mouseClick();
+          playClickSound();
+          console.log("🖱 Mouse click");
+        } catch (e) {
+          console.error("robotjs click error:", e.message);
         }
-        io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
+      }
+
+      // --- clear ---
+      if (parsed.clear === true) {
+        console.log("🧹 Clear command received");
+        io.emit("sensor-clear", { timestamp: Date.now() });
       }
     }
   });
@@ -221,8 +276,8 @@ mqttClient.on("connect", () => {
       gx: (Math.sin(t * 1.2) * 30).toFixed(2) * 1,   // deg/s — drives mouseY
       gy: (Math.cos(t * 0.9) * 30).toFixed(2) * 1,   // deg/s — drives mouseX
       gz: (Math.sin(t * 0.4) * 10).toFixed(2) * 1,
-      heading: ((t * 20) % 360).toFixed(1) * 1,
-      fwdHeading: ((t * 20) % 360).toFixed(1) * 1,
+      // heading: ((t * 20) % 360).toFixed(1) * 1,
+      // fwdHeading: ((t * 20) % 360).toFixed(1) * 1,
       calibrated: true,
     };
   }
@@ -234,8 +289,8 @@ mqttClient.on("connect", () => {
         source: "mock-mqtt",
         sensor: {
           ...sensor,
-          posX: Math.sin(sensor.heading * Math.PI / 180),
-          posY: Math.cos(sensor.heading * Math.PI / 180),
+          // posX: Math.sin(sensor.heading * Math.PI / 180),
+          // posY: Math.cos(sensor.heading * Math.PI / 180),
           mag: Math.sqrt(sensor.gx ** 2 + sensor.gy ** 2),
         },
         timestamp: Date.now(),
