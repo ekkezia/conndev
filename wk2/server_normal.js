@@ -1,58 +1,18 @@
-const { db } = require("./firebase.js");
-const { ref, get, set } = require("firebase/database");
+// ===============================
+// TCP (Arduino direct connection)
+// ===============================
+const net = require("net");
+const tcpPort = 3000;
 
 // ===============================
 // Express + Socket.IO
 // ===============================
-
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const robot = require("robotjs");
 const { spawn } = require("child_process");
-
-// ===============================
-// Firebase Session Tracking
-// ===============================
-// Sessions are stored under: sessions/session_N/{ startTimestamp, data: [...] }
-// A new session begins when power turns ON, ends (implicit) when power turns OFF.
-// Data is buffered locally and flushed to Firebase every 5s + on session end.
-const FIREBASE_FLUSH_INTERVAL = 5000;
-let currentSessionId = null;      // e.g. "session_3"
-let sessionBuffer = [];           // entries accumulated since session start
-let sessionStartTimestamp = null;
-
-async function startNewSession() {
-  try {
-    const snapshot = await get(ref(db, "sessions"));
-    const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
-    currentSessionId = `session_${count + 1}`;
-    sessionStartTimestamp = Date.now();
-    sessionBuffer = [];
-    await set(ref(db, `sessions/${currentSessionId}/startTimestamp`), sessionStartTimestamp);
-    console.log(`📁 Firebase session started: ${currentSessionId}`);
-  } catch (err) {
-    console.error("Firebase startNewSession error:", err.message);
-  }
-}
-
-function flushSessionToFirebase() {
-  if (!currentSessionId || sessionBuffer.length === 0) return;
-  set(ref(db, `sessions/${currentSessionId}/data`), sessionBuffer)
-    .catch((err) => console.error("Firebase flush error:", err.message));
-}
-
-function endSession() {
-  flushSessionToFirebase(); // final flush before clearing
-  console.log(`📁 Firebase session ended: ${currentSessionId} (${sessionBuffer.length} entries)`);
-  currentSessionId = null;
-  sessionBuffer = [];
-  sessionStartTimestamp = null;
-}
-
-// Flush buffer to Firebase every 5s while a session is active
-setInterval(flushSessionToFirebase, FIREBASE_FLUSH_INTERVAL);
 
 function playClickSound() {
   spawn("afplay", ["/System/Library/Sounds/Tink.aiff"], { detached: true, stdio: "ignore" }).unref();
@@ -70,7 +30,7 @@ let sensorData = [];
 // Run mock data through moveMouseFromIMU every 50 ms.
 // Toggle with the MOCK_MOUSE env var: MOCK_MOUSE=1 node server_mouse.js
 const MOCK_MOUSE = false; // 0
-let mouseEnabled = false; // starts OFF — session begins on first power ON
+let mouseEnabled = true; // toggle here
 
   const ROT_GAIN = 0.35;
   const TILT_GAIN = 3.5;
@@ -174,6 +134,13 @@ targetY = Math.max(
   Math.min(targetY + moveY, screenH - 1)
 );
 
+  // targetX = Math.round(
+  //   (data.heading / 360) * (screenW - 1)
+  // );
+  // const pitchNorm = (data.pitch + 90) / 180; 
+  // targetY = Math.round(
+  //   (1 - pitchNorm) * (screenH - 1)
+  // );
   // Sensor Data Shape from Arduino will be just ...data
   // We process the rest here in the server
   return {
@@ -252,9 +219,6 @@ mqttClient.on("connect", () => {
       if (sensorData.length >= 1000) sensorData.shift();
       sensorData.push(entry);
 
-      // Buffer entry for current Firebase session
-      if (currentSessionId) sessionBuffer.push(entry);
-
       console.log("📡 MQTT sensor data:", entry.sensor.pitch);
 
       // emit to socket so frontend can update in real time
@@ -278,17 +242,9 @@ mqttClient.on("connect", () => {
 
       // --- power ---
       if (parsed.power !== undefined) { 
-        const wasEnabled = mouseEnabled;
         mouseEnabled = parsed.power === true;
         console.log(`🖱 Mouse control: ${mouseEnabled ? "ENABLED" : "DISABLED"} (power)`);
         io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
-
-        // Session lifecycle: start on power ON, end on power OFF
-        if (!wasEnabled && mouseEnabled) {
-          startNewSession();
-        } else if (wasEnabled && !mouseEnabled) {
-          endSession();
-        }
       }
 
       // --- click ---
@@ -351,6 +307,97 @@ mqttClient.on("connect", () => {
     }, 50);
   }
 });
+
+// ===============================
+// TCP SERVER [deprecated]
+// ===============================
+// const tcpServer = net.createServer((socket) => {
+//   console.log(
+//     "Arduino connected (TCP):",
+//     socket.remoteAddress + ":" + socket.remotePort
+//   );
+
+//   socket._buffer = "";
+
+//   socket.on("data", (data) => {
+//     try {
+//       socket._buffer += data.toString();
+//       let buf = socket._buffer;
+
+//       let start = buf.indexOf("{");
+
+//       while (start !== -1) {
+//         let depth = 0;
+//         let end = -1;
+
+//         for (let i = start; i < buf.length; i++) {
+//           const ch = buf[i];
+//           if (ch === "{") depth++;
+//           else if (ch === "}") depth--;
+
+//           if (depth === 0) {
+//             end = i;
+//             break;
+//           }
+//         }
+
+//         if (end === -1) break;
+
+//         const piece = buf.slice(start, end + 1);
+//         buf = buf.slice(end + 1);
+
+//         try {
+//           const parsed = JSON.parse(piece);
+
+//           if (parsed?.sensor) {
+
+//             // 🔥 MOVE MOUSE HERE
+//             const data = {
+//               ...parsed.sensor,
+//               posX: Math.sin(parsed.sensor.heading * Math.PI / 180),
+//               posY: Math.cos(parsed.sensor.heading * Math.PI / 180),
+//               mag: Math.sqrt(parsed.sensor.gx ** 2 + parsed.sensor.gy ** 2),
+//             };
+//             const mouseTarget = moveMouseFromIMU(data);
+
+//             const entry = {
+//               sensor: { ...data, ...mouseTarget },
+//               timestamp: parsed.timestamp || Date.now(),
+//               source: "tcp",
+//             };
+
+//             if (sensorData.length >= 1000) sensorData.shift();
+//             sensorData.push(entry);
+
+//             io.emit("sensor-realtime-receive", entry);
+
+//             console.log("🛜 TCP sensor data:", entry);
+//           }
+//         } catch (e) {
+//           console.warn("Malformed TCP JSON:", e.message);
+//         }
+
+//         start = buf.indexOf("{");
+//       }
+
+//       socket._buffer = buf;
+//     } catch (e) {
+//       console.error("TCP processing error:", e.message);
+//     }
+//   });
+
+//   socket.on("end", () => {
+//     console.log("Arduino (TCP) disconnected");
+//   });
+
+//   socket.on("error", (err) => {
+//     console.error("TCP socket error:", err);
+//   });
+// });
+
+// tcpServer.listen(tcpPort, () => {
+//   console.log(`🛜 TCP server running on port ${tcpPort}`);
+// });
 
 // ===============================
 // SOCKET.IO CLIENT HANDLING
