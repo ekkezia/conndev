@@ -127,6 +127,13 @@ function processSensorData(parsed, source = "mqtt") {
     targetY = Math.max(0, Math.min(targetY + moveY, screenH - 1));
   }
 
+  // targetX = Math.round(
+  //   (data.heading / 360) * (screenW - 1)
+  // );
+  // const pitchNorm = (data.pitch + 90) / 180; 
+  // targetY = Math.round(
+  //   (1 - pitchNorm) * (screenH - 1)
+  // );
   // Sensor Data Shape from Arduino will be just ...data
   // We process the rest here in the server
   return {
