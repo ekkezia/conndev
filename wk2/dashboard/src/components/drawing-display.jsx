@@ -20,8 +20,13 @@ export default function DrawingDisplay({ className }) {
   // ----- PLAYBACK STATE -----
   const playbackPosRef = useRef(null);
   const playbackPrevRef = useRef(null);
+  const lastDrawnIdxRef = useRef(-1);   // last data index fully painted on the layer
+  const animFrameRef = useRef(null);    // in-flight requestAnimationFrame id
+  const lerpPosRef = useRef(null);      // { x, y } lerp cursor, survives between effect calls
 
-  const { sensorData, playbackMode, playbackStatus, enableHelper, mousePos, clear, setClear } = useIMU();
+  const { sensorData, playbackMode, playbackStatus, enableHelper, mousePos, clear, setClear, selectedSession, selectedSessionData } = useIMU();
+  // Always-fresh data for the selected session (derived live in IMUContext)
+  const playbackData = selectedSessionData;
   const mouseDotRef = useRef(null);
   const mousePathRef = useRef(null); // persistent paper.Path for no the mouse trail
   const [drawState, setDrawState] = useState(true); // todo: change later
@@ -335,101 +340,136 @@ export default function DrawingDisplay({ className }) {
     paper.view.draw();
   }, [mousePos, sensorData]);
 
-  // Helper function to convert HSL to RGB
-  function hslToRgb(h, s, l) {
-    s /= 100;
-    l /= 100;
-    const k = n => (n + h / 30) % 12;
-    const a = s * Math.min(l, 1 - l);
-    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-    return [f(0), f(8), f(4)];
-  }
-
   // =================================================
-  // PLAYBACK MODE
+  // PLAYBACK — reset layer when session changes
   // =================================================
   useEffect(() => {
-    if (!playbackMode || !sensorData) return;
+    if (!playbackLayerRef.current) return;
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    animFrameRef.current = null;
+    playbackLayerRef.current.removeChildren();
+    lastDrawnIdxRef.current = -1;
+    playbackPosRef.current = null;
+    playbackPrevRef.current = null;
+    lerpPosRef.current = null;
+    paper.view.draw();
+  }, [selectedSession]);
+
+  // =================================================
+  // PLAYBACK MODE — incremental lerp-animated draw
+  // =================================================
+  useEffect(() => {
+    if (!playbackMode || !playbackData || !playbackLayerRef.current) return;
+    if (playbackData.length === 0) return;
 
     const width = paper.view.size.width;
     const height = paper.view.size.height;
-    const center = new paper.Point(width / 2, height / 2);
 
-    playbackLayerRef.current.removeChildren();
-    playbackPosRef.current = center.clone();
-
-    const maxIdx = playbackStatus.currentDataIdx || 0;
-
-    // First pass: count visits per grid cell for heatmap
-    const cellSize = 8;
-    const heatmapGrid = {};
-
-    const computePos = (mouseTargetX, mouseTargetY, screenW, screenH) => {
-      if (!screenW || !screenH) return null;
+    const getPoint = (entry) => {
+      if (!entry?.sensor || !entry?.screenSize) return null;
+      const { mouseTargetX, mouseTargetY, mag } = entry.sensor;
+      const { width: screenW, height: screenH } = entry.screenSize;
+      if (mouseTargetX == null || !screenW || !screenH) return null;
       const x = Math.max(0, Math.min((mouseTargetX / screenW) * width, width));
       const y = Math.max(0, Math.min((mouseTargetY / screenH) * height, height));
       if (isNaN(x) || isNaN(y)) return null;
-      return { x, y };
+      return { x, y, mag: mag ?? 1 };
     };
 
-    for (let i = 0; i <= maxIdx; i++) {
-      const s = sensorData[i];
-      if (!s?.sensor || !s?.screenSize) continue;
+    const targetIdx = playbackStatus.currentDataIdx ?? (playbackData.length - 1);
 
-      const { mouseTargetX, mouseTargetY, mag } = s.sensor;
-      const { width: screenW, height: screenH } = s.screenSize;
-      if (mouseTargetX == null || mouseTargetY == null || mag == null) continue;
+    // Helper: batch-draw all points up to idx instantly (no lerp)
+    const batchDraw = (upToIdx) => {
+      if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
+      playbackLayerRef.current.removeChildren();
+      lastDrawnIdxRef.current = -1;
+      playbackPosRef.current = null;
+      playbackPrevRef.current = null;
+      lerpPosRef.current = null;
 
-      const result = computePos(mouseTargetX, mouseTargetY, screenW, screenH);
-      if (!result) continue;
-      const { x, y } = result;
+      const allPts = [];
+      for (let i = 0; i <= upToIdx; i++) {
+        const pt = getPoint(playbackData[i]);
+        if (pt) allPts.push(pt);
+      }
+      if (allPts.length > 0) {
+        playbackPosRef.current = new paper.Point(allPts[0].x, allPts[0].y);
+        playbackPrevRef.current = new paper.Point(allPts[0].x, allPts[0].y);
+        lerpPosRef.current = { x: allPts[0].x, y: allPts[0].y };
+        for (let i = 1; i < allPts.length; i++) {
+          drawLine(allPts[i].x, allPts[i].y, allPts[i].mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+        }
+        lerpPosRef.current = { x: allPts[allPts.length - 1].x, y: allPts[allPts.length - 1].y };
+        lastDrawnIdxRef.current = upToIdx;
+      }
+      paper.view.draw();
+    };
 
-      const gridKey = `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
-      heatmapGrid[gridKey] = (heatmapGrid[gridKey] || 0) + 1;
+    // Scrubbing backward or first open — instant batch draw
+    if (targetIdx < lastDrawnIdxRef.current || lastDrawnIdxRef.current === -1) {
+      batchDraw(targetIdx);
+      return;
     }
 
-    const maxVisits = Math.max(...Object.values(heatmapGrid), 1);
+    // Already up-to-date
+    if (lastDrawnIdxRef.current >= targetIdx) return;
 
-    // Second pass: draw dots with heatmap colors
-    playbackLayerRef.current.activate();
-    let lastPos = center.clone();
+    // Forward advance — get the single next target point and lerp to it
+    const target = getPoint(playbackData[targetIdx]);
+    if (!target) { lastDrawnIdxRef.current = targetIdx; return; }
 
-    for (let i = 0; i <= maxIdx; i++) {
-      const s = sensorData[i];
-      if (!s?.sensor || !s?.screenSize) continue;
-
-      const { mouseTargetX, mouseTargetY, mag } = s.sensor;
-      const { width: screenW, height: screenH } = s.screenSize;
-      if (mouseTargetX == null || mouseTargetY == null || mag == null) continue;
-
-      const result = computePos(mouseTargetX, mouseTargetY, screenW, screenH);
-      if (!result) continue;
-      const { x, y } = result;
-
-      const pos = new paper.Point(x, y);
-
-      const gridKey = `${Math.floor(pos.x / cellSize)},${Math.floor(pos.y / cellSize)}`;
-      const visits = heatmapGrid[gridKey] || 1;
-      const normalizedHeat = visits / maxVisits;
-
-      // HSL: purple (280°) for low visits → red (0°) for high visits
-      const hue = 280 * (1 - normalizedHeat);
-      const saturation = 100;
-      const lightness = 50;
-
-      const [r, g, b] = hslToRgb(hue, saturation, lightness);
-
-      new paper.Path.Circle({
-        center: pos.clone(),
-        radius: 4,
-        fillColor: new paper.Color(r, g, b, 0.6),
-      });
-      lastPos = pos;
+    // Ensure refs are seeded
+    if (!playbackPosRef.current) {
+      const first = getPoint(playbackData[0]);
+      if (!first) return;
+      playbackPosRef.current = new paper.Point(first.x, first.y);
+      playbackPrevRef.current = new paper.Point(first.x, first.y);
+      lerpPosRef.current = { x: first.x, y: first.y };
     }
 
-    playbackPosRef.current = lastPos.clone();
-    paper.view.draw();
-  }, [playbackMode, playbackStatus.currentDataIdx, sensorData]);
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+    const LERP_DURATION = 750;
+    const startTime = performance.now();
+    const startX = lerpPosRef.current?.x ?? playbackPrevRef.current.x;
+    const startY = lerpPosRef.current?.y ?? playbackPrevRef.current.y;
+
+    const animate = (now) => {
+      if (!playbackPrevRef.current || !playbackLayerRef.current) {
+        animFrameRef.current = null;
+        return;
+      }
+      const t = Math.min((now - startTime) / LERP_DURATION, 1);
+      // Ease out cubic
+      const ease = 1 - Math.pow(1 - t, 3);
+
+      const x = startX + (target.x - startX) * ease;
+      const y = startY + (target.y - startY) * ease;
+
+      lerpPosRef.current = { x, y };
+
+      const dx = x - playbackPrevRef.current.x;
+      const dy = y - playbackPrevRef.current.y;
+      if (Math.sqrt(dx * dx + dy * dy) > 0.5) {
+        drawLine(x, y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+      }
+
+      if (t < 1) {
+        animFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        // Snap exactly to target
+        drawLine(target.x, target.y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+        lerpPosRef.current = { x: target.x, y: target.y };
+        lastDrawnIdxRef.current = targetIdx;
+        animFrameRef.current = null;
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    };
+  }, [playbackMode, playbackStatus.currentDataIdx, playbackData]);
 
   return (
     <div className={`absolute top-0 left-0 w-full h-full ${className}`}>

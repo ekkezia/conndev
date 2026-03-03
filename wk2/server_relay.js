@@ -1,0 +1,255 @@
+// ===============================
+// server_relay.js  —  DEPLOYABLE (no robotjs)
+// Handles: MQTT → Socket.IO → Firebase
+// Mouse control is handled by server_mouse_local.js running on each user's machine
+// ===============================
+
+const { db } = require("./firebase.js");
+const { ref, get, set } = require("firebase/database");
+
+const express = require("express");
+const http = require("http");
+const cors = require("cors");
+const { Server } = require("socket.io");
+const mqtt = require("mqtt");
+
+const app = express();
+const port = process.env.PORT || 4000;
+
+app.use(cors());
+app.use(express.json());
+
+let mouseEnabled = false;
+
+// In-memory session store — mirrors Firebase shape
+// [ { id, startTimestamp, data: [] }, ... ]
+let sessions = [];
+let currentSession = null; // pointer to the active session object
+
+// ===============================
+// Firebase Session Tracking
+// ===============================
+const FIREBASE_FLUSH_INTERVAL = 5000;
+let currentSessionId = null;
+let sessionStartTimestamp = null;
+
+async function startNewSession() {
+  try {
+    const snapshot = await get(ref(db, "sessions"));
+    const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
+    currentSessionId = `session_${count + 1}`;
+    sessionStartTimestamp = Date.now();
+    sessionBuffer = [];
+    // Create in-memory session and link Firebase + local
+    currentSession = { id: currentSessionId, startTimestamp: sessionStartTimestamp, data: [] };
+    sessions.push(currentSession);
+    await set(ref(db, `sessions/${currentSessionId}/startTimestamp`), sessionStartTimestamp);
+    console.log(`📁 Firebase session started: ${currentSessionId}`);
+  } catch (err) {
+    console.error("Firebase startNewSession error:", err.message);
+  }
+}
+
+function flushSessionToFirebase() {
+  if (!currentSessionId || !currentSession || currentSession.data.length === 0) return;
+  set(ref(db, `sessions/${currentSessionId}/data`), currentSession.data)
+    .catch((err) => console.error("Firebase flush error:", err.message));
+}
+
+function endSession() {
+  flushSessionToFirebase();
+  console.log(`📁 Firebase session ended: ${currentSessionId} (${currentSession?.data.length ?? 0} entries)`);
+  currentSessionId = null;
+  sessionStartTimestamp = null;
+  currentSession = null; // keep historical sessions[] intact for initial-data
+}
+
+setInterval(flushSessionToFirebase, FIREBASE_FLUSH_INTERVAL);
+
+// ===============================
+// Client-reported screen + cursor state
+// Updated via socket events from the frontend
+// ===============================
+const ROT_GAIN = 0.35;
+const TILT_GAIN = 3.5;
+const DEAD_ZONE = 1.2;
+let lastPitch = null;
+let clientScreenSize = { width: 1920, height: 1080 }; // updated by frontend on connect
+let targetX = null;
+let targetY = null;
+let lerpX = null;
+let lerpY = null;
+
+// Lerp loop — runs at ~60fps, sends computed cursor pos to all dashboard clients
+let lerpIo = null; // set once io is created
+setInterval(() => {
+  if (!mouseEnabled || targetX === null || !lerpIo) return;
+  const t = 0.12;
+  lerpX = lerpX + (targetX - lerpX) * t;
+  lerpY = lerpY + (targetY - lerpY) * t;
+  lerpIo.emit('mouse-pos', { x: Math.round(lerpX), y: Math.round(lerpY) });
+}, 1000 / 60);
+
+// ===============================
+// Sensor Processing (no robot.js — uses client-reported screen/mouse)
+// ===============================
+function processSensorData(parsed, source = "mqtt") {
+  if (!parsed?.sensor) return null;
+  const data = parsed.sensor;
+  const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2);
+  const { width: screenW, height: screenH } = clientScreenSize;
+
+  // Init to screen center on first entry
+  if (targetX === null) {
+    targetX = screenW / 2;
+    targetY = screenH / 2;
+    lerpX = targetX;
+    lerpY = targetY;
+  }
+
+  // Absolute pitch from accelerometer
+  const pitch = Math.atan2(data.ax, Math.sqrt(data.ay ** 2 + data.az ** 2)) * 180 / Math.PI;
+  let sensitivity = data.sensitivity; // range: 0-10
+
+  const moveX = Math.abs(data.gz) < DEAD_ZONE ? 0 : -data.gz * sensitivity;
+  const moveY = Math.abs(data.gx) < DEAD_ZONE ? 0 : -data.gx * sensitivity;
+
+  targetX = Math.max(0, Math.min(targetX + moveX, screenW - 1));
+  targetY = Math.max(0, Math.min(targetY + moveY, screenH - 1));
+
+  return {
+    sensor: { ...data, mag, mouseTargetX: targetX, mouseTargetY: targetY },
+    screenSize: clientScreenSize,
+    timestamp: parsed.timestamp || Date.now(),
+    source,
+  };
+}
+
+// ===============================
+// REST
+// ===============================
+app.get("/", (req, res) => res.send({ status: "ok", message: "Hello Magic Wand 🪄" }));
+app.get("/sensor-data", (req, res) => res.json(sessions));
+
+// ===============================
+// HTTP + Socket.IO
+// ===============================
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+});
+lerpIo = io; // give lerp loop access to io
+
+// ===============================
+// MQTT CLIENT
+// ===============================
+const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://public.cloud.shiftr.io:1883";
+const MQTT_TOPIC = "kezia/imu/";
+const MQTT_SUBTOPIC = { DATA: "data", CONTROL: "control" };
+
+const mqttClient = mqtt.connect(MQTT_BROKER, {
+  username: process.env.MQTT_USER || "public",
+  password: process.env.MQTT_PASS || "public",
+});
+
+mqttClient.on("connect", () => {
+  console.log("📡 Connected to MQTT broker:", MQTT_BROKER);
+  for (const sub of Object.values(MQTT_SUBTOPIC)) {
+    mqttClient.subscribe(MQTT_TOPIC + sub, (err) => {
+      if (err) console.error(`MQTT subscribe error (${sub}):`, err);
+      else console.log(`📥 Subscribed: ${MQTT_TOPIC + sub}`);
+    });
+  }
+
+  mqttClient.on("message", (topic, message) => {
+    // --- sensor data ---
+    if (topic.includes(MQTT_SUBTOPIC.DATA)) {
+      try {
+        const parsed = JSON.parse(message.toString());
+        const entry = processSensorData(parsed, "mqtt");
+        if (!entry) return;
+
+        let processedEntry = processSensorData(parsed, "mqtt");
+        // Push into current session's data array
+        if (currentSession) {
+          if (currentSession.data.length >= 1000) currentSession.data.shift();
+          currentSession.data.push(processedEntry);
+        }
+
+        console.log('📥 ', processedEntry);
+
+        io.emit("sensor-realtime-receive", entry);
+      } catch (err) {
+        console.error("MQTT data parse error:", err.message);
+      }
+    }
+
+    // --- control ---
+    if (topic.includes(MQTT_SUBTOPIC.CONTROL)) {
+      let parsed;
+      try { parsed = JSON.parse(message.toString()); }
+      catch (err) { console.error("MQTT control parse error:", err.message); return; }
+
+      console.log("🎮 Control:", parsed);
+
+      if (parsed.power !== undefined) {
+        const wasEnabled = mouseEnabled;
+        mouseEnabled = parsed.power === true;
+        io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
+        console.log(`🖱 Power: ${mouseEnabled ? "ON" : "OFF"}`);
+
+        if (!wasEnabled && mouseEnabled) startNewSession();
+        else if (wasEnabled && !mouseEnabled) endSession();
+      }
+
+      if (parsed.click === true) {
+        // relay click to local mouse agent(s)
+        io.emit("mouse-click");
+        console.log("🖱 Click relayed");
+      }
+
+      if (parsed.clear === true) {
+        io.emit("sensor-clear", { timestamp: Date.now() });
+        console.log("🧹 Clear relayed");
+      }
+    }
+  });
+
+  mqttClient.on("error", (err) => console.error("MQTT error:", err));
+});
+
+// ===============================
+// Socket.IO
+// ===============================
+io.on("connection", (socket) => {
+  console.log("🔌 Client connected:", socket.id);
+
+  socket.emit("sensor-initial-data", sessions);
+  socket.emit("user", { id: socket.id });
+
+  // Frontend reports its screen size on connect
+  socket.on("screen-size", (size) => {
+    clientScreenSize = size;
+    console.log(`🖥 Screen size reported: ${size.width}x${size.height}`);
+  });
+
+  // Frontend reports current mouse position (for init / sync)
+  socket.on("mouse-pos-report", (pos) => {
+    if (targetX === null) {
+      targetX = pos.x; lerpX = pos.x;
+      targetY = pos.y; lerpY = pos.y;
+    }
+  });
+
+  // Local mouse agent reports cursor position → forward to dashboard clients
+  socket.on("mouse-pos", (pos) => {
+    socket.broadcast.emit("mouse-pos", pos);
+  });
+
+  socket.on("disconnect", () => console.log("🪫 Disconnected:", socket.id));
+});
+
+// ===============================
+// START
+// ===============================
+server.listen(port, () => console.log(`🌎 Relay server running at http://localhost:${port}`));

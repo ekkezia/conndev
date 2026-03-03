@@ -11,97 +11,24 @@ function formatPlaybackTime(ms) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-// Small canvas thumbnail showing the drawn path for one session
-function SessionPreview({ session }) {
-  const canvasRef = useRef(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !session?.data?.length) return;
-    const ctx = canvas.getContext("2d");
-    const W = canvas.width;
-    const H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
-
-    // Collect valid points mapped to canvas space
-    const points = session.data
-      .filter((e) => e?.sensor?.mouseTargetX != null && e?.screenSize)
-      .map((e) => ({
-        x: (e.sensor.mouseTargetX / e.screenSize.width) * W,
-        y: (e.sensor.mouseTargetY / e.screenSize.height) * H,
-        mag: e.sensor.mag ?? 1,
-      }));
-
-    if (points.length < 2) return;
-
-    // Draw path
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    for (let i = 1; i < points.length; i++) {
-      const prev = points[i - 1];
-      const curr = points[i];
-      const maxMag = 40;
-      const width = Math.max(0.5, Math.min(4, (curr.mag / maxMag) * 4));
-      ctx.beginPath();
-      ctx.moveTo(prev.x, prev.y);
-      ctx.lineTo(curr.x, curr.y);
-      ctx.strokeStyle = "rgba(255, 0, 255, 0.85)";
-      ctx.lineWidth = width;
-      ctx.stroke();
-    }
-  }, [session]);
-
-  const duration = useMemo(() => {
-    if (!session?.data?.length) return null;
-    const first = session.data[0]?.timestamp;
-    const last = session.data[session.data.length - 1]?.timestamp;
-    return Number.isFinite(first) && Number.isFinite(last) ? last - first : null;
-  }, [session]);
-
-  return (
-    <div className="flex gap-2 items-center p-2 rounded-lg hover:bg-white/5 cursor-pointer transition">
-      {/* Thumbnail */}
-      <div className="relative flex-shrink-0 rounded overflow-hidden bg-black border border-white/10" style={{ width: 120, height: 68 }}>
-        <canvas ref={canvasRef} width={120} height={68} className="w-full h-full" />
-        {duration != null && (
-          <span className="absolute bottom-1 right-1 text-[9px] font-mono bg-black/80 text-white px-1 rounded">
-            {formatPlaybackTime(duration)}
-          </span>
-        )}
-      </div>
-      {/* Meta */}
-      <div className="flex flex-col gap-0.5 min-w-0">
-        <span className="text-xs text-white font-mono truncate">{session.id}</span>
-        <span className="text-[10px] text-white/50 font-mono">
-          {session.startTimestamp ? new Date(session.startTimestamp).toLocaleString() : "—"}
-        </span>
-        <span className="text-[10px] text-white/40 font-mono">{session.data.length} pts</span>
-      </div>
-    </div>
-  );
-}
-
 export default function PlaybackDisplay({ className }) {
   const {
     playbackMode: isOpen,
     setPlaybackMode: setIsOpen,
+    sensorData,
     playbackStatus,
     setPlaybackStatus,
-    sessions,
-    selectedSession,
-    setSelectedSession,
-    selectedSessionData,
+    sessions
   } = useIMU();
-
-  // Always-fresh data for the selected session (derived live in IMUContext)
-  const activeData = selectedSessionData;
   const displayRef = useRef(null);
 
-  // Reset playback head whenever the active data source changes
+  // clipped timestamp is the timestamp in the sensor data that matches the latest timestamp before the current Date.now()
+  // current timestamp is the timestamp that the user has clicked on the playback bar
   useEffect(() => {
-    const data = activeData || [];
     const now = Date.now();
-    const filteredData = data.filter((d) => d.timestamp <= now);
+
+    // Find the closest timestamp in sensorData that is <= now
+    const filteredData = (sensorData || []).filter((d) => d.timestamp <= now);
     const closestTimestamp =
       filteredData.length > 0
         ? filteredData[filteredData.length - 1].timestamp
@@ -111,33 +38,32 @@ export default function PlaybackDisplay({ className }) {
       ...prev,
       clippedTimestamp: closestTimestamp,
       currentTimestamp: closestTimestamp,
-      currentDataIdx: filteredData.length - 1,
-      isPlaying: false,
     }));
-  }, [isOpen, selectedSession]);
+    // console.log('Playback mode changed:', closestTimestamp);
+  }, [isOpen, sensorData]);
 
   // do not put set objects to useMemo dependencies to avoid infinite loop
   const clippedSensorData = useMemo(
     () =>
-      (activeData || []).filter(
+      (sensorData || []).filter(
         (d) => d.timestamp <= playbackStatus.clippedTimestamp
       ), // only playback up until the current timestamp when user has clicked the playback button
-    [activeData, playbackStatus.clippedTimestamp]
+    [sensorData, playbackStatus.clippedTimestamp]
   );
 
   const progressSensorData = useMemo(() => {
     if (!clippedSensorData || clippedSensorData.length === 0) return 0;
-    const firstTimestamp = activeData[0].timestamp;
+    const firstTimestamp = sensorData[0].timestamp;
     const lastTimestamp = playbackStatus.clippedTimestamp;
     const range = lastTimestamp - firstTimestamp;
 
     if (range <= 0) return 0;
     const progress = (playbackStatus.currentTimestamp - firstTimestamp) / range;
     return Math.min(Math.max(progress, 0), 1); // clamp between 0 and 1
-  }, [clippedSensorData, playbackStatus, activeData]);
+  }, [clippedSensorData, playbackStatus, sensorData]);
 
   const playbackTimes = useMemo(() => {
-    const firstTimestamp = activeData?.[0]?.timestamp;
+    const firstTimestamp = clippedSensorData?.[0]?.timestamp;
     if (!Number.isFinite(firstTimestamp)) {
       return { currentMs: 0, totalMs: 0 };
     }
@@ -146,7 +72,7 @@ export default function PlaybackDisplay({ className }) {
       currentMs: Math.max(0, (playbackStatus.currentTimestamp ?? firstTimestamp) - firstTimestamp),
       totalMs: Math.max(0, (playbackStatus.clippedTimestamp ?? firstTimestamp) - firstTimestamp),
     };
-  }, [activeData, clippedSensorData, playbackStatus.currentTimestamp, playbackStatus.clippedTimestamp]);
+  }, [clippedSensorData, playbackStatus.currentTimestamp, playbackStatus.clippedTimestamp]);
 
   // Playback effect: auto-advance currentTimestamp if it's less than clippedTimestamp
   useEffect(() => {
@@ -159,7 +85,7 @@ export default function PlaybackDisplay({ className }) {
       //   playbackStatus.currentTimestamp
       // );
     } else {
-      // autoplay — 1 point per tick, drawing-display lerps smoothly between them
+      // autoplay
       const interval = setInterval(() => {
         setPlaybackStatus((prev) => {
           // Stop if we've reached or exceeded the clipped timestamp
@@ -172,11 +98,15 @@ export default function PlaybackDisplay({ className }) {
 
           // If we're at the end, stop
           if (currentIndex >= clippedSensorData.length - 1) {
+            // console.log('Playback reached end at index:', clippedSensorData.length - 1);
             return prev;
           }
 
+          // Move to next data point
           const nextIndex = currentIndex + 1;
           const nextTimestamp = clippedSensorData[nextIndex].timestamp;
+
+          // console.log('Playing back sensor data at index:', nextIndex, 'timestamp:', clippedSensorData[nextIndex].timestamp);
 
           // Stop if we've exceeded the clipped timestamp
           if (nextTimestamp > prev.clippedTimestamp) {
@@ -189,7 +119,7 @@ export default function PlaybackDisplay({ className }) {
             currentTimestamp: nextTimestamp,
           };
         });
-      }, 800);
+      }, 500);
 
       return () => clearInterval(interval);
     }
@@ -303,30 +233,25 @@ export default function PlaybackDisplay({ className }) {
 
   return (
     <div ref={displayRef}>
-      {/* Session history sidebar */}
-      {isOpen && (
-        <div className="absolute w-72 top-[10%] right-2 bg-black/90 border border-white/10 rounded-xl max-h-[70vh] overflow-y-auto flex flex-col gap-0.5 p-1.5">
-          <div className="text-[10px] text-white/40 font-mono px-2 py-1 uppercase tracking-widest">Sessions</div>
-          {sessions.length === 0 && (
-            <div className="text-[11px] text-white/30 font-mono px-2 py-3 text-center">No sessions yet</div>
-          )}
-          {[...sessions].reverse().map((session) => (
-            <div
-              key={session.id}
-              onClick={() => {
-                setSelectedSession(session);
-              }}
-              className={`rounded-lg outline outline-2 transition-all ${
-                selectedSession?.id === session.id
-                  ? 'outline-fuchsia-500'
-                  : 'outline-transparent'
-              }`}
-            >
-              <SessionPreview session={session} />
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Preview */}
+      {isOpen && <div className="absolute w-fit h-fit top-[50%] right-2 bg-black rounded-lg h-max-[50vh] overflow-y-scroll">
+          {
+            sessions.map((session) => (
+              <div key={session.id} className="border-b border-white/10 p-2">
+                <div className="text-sm text-white/70 font-mono mb-1">
+                  {session.id} - {new Date(session.startTimestamp).toLocaleString()}
+                </div>
+                <div className="text-xs text-white/50 font-mono max-h-32 overflow-y-auto">
+                  {session.data.map((entry, idx) => (
+                    <div key={idx}>
+                      {new Date(entry.timestamp).toLocaleTimeString()}: gx={entry.sensor.gx.toFixed(2)}, gy={entry.sensor.gy.toFixed(2)}, gz={entry.sensor.gz.toFixed(2)}, mag={entry.sensor.mag.toFixed(2)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          }
+          </div>}
       <MenuButton
         className={clsx(
           "bottom-4 right-4 z-50",

@@ -1,8 +1,7 @@
-import { createContext, useContext, useState, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
 import { useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { SERVER_URL } from '../config';
-import { mockSensorData } from '../components/mock-data';
 
 const IMUContext = createContext(null);
 
@@ -10,15 +9,26 @@ export function IMUProvider({ children }) {
   const [mouseEnabled, setMouseEnabled] = useState(false);
   const [playbackMode, setPlaybackMode] = useState(false); // toggle false = drawing real time, / true = playback
   const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null, currentTimestamp: null, currentDataIdx: null, isPlaying: false }); // default to play, false for pause
-  const [sensorData, setSensorData] = useState(mockSensorData);
+  const [sensorData, setSensorData] = useState([]); // live entries for current session
+  const [sessions, setSessions] = useState([]); // full session history: [{ id, startTimestamp, data[] }]
+  const [selectedSession, setSelectedSession] = useState(null); // session chosen in playback UI
   const [enableHelper, setEnableHelper] = useState(false);
   const [showDotmap, setShowDotmap] = useState(false);
   const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
   const [clear, setClear] = useState(false);
-  const [calibrationState, setCalibrationState] = useState({ calibrated: false, data: null, timestamp: null });  
+  const [calibrationState, setCalibrationState] = useState({ calibrated: false, data: null, timestamp: null });
+
+  // Always-fresh data for the selected session — derived by looking up sessions[] by ID
+  // (selectedSession itself is a stale snapshot; sessions[] is the live source of truth)
+  const selectedSessionData = useMemo(() => {
+    if (!selectedSession) return sensorData;
+    const live = sessions.find((s) => s.id === selectedSession.id);
+    return live?.data ?? sensorData;
+  }, [selectedSession, sessions, sensorData]);
 
   const updateSensor = useCallback((newSensor) => {
     setSensorData((s) => [...s.slice(-999), newSensor]);
+    
   }, []);
 
   const enableMouse = useCallback(() => setMouseEnabled(true), []);
@@ -29,21 +39,66 @@ export function IMUProvider({ children }) {
   useEffect(() => {
     socket.current = io(SERVER_URL);
 
-    socket.current.on('sensor-initial-data', (data) => setSensorData(data));
-    socket.current.on('sensor-realtime-receive', (data) => setSensorData((prev) => [...prev, data].slice(-1000)));
+    // Report screen size immediately so server can use it for mouse mapping
+    socket.current.emit('screen-size', { width: window.screen.width, height: window.screen.height });
+
+    // Report current mouse position (throttled) so server can init cursor state
+    let lastMouseReport = 0;
+    const onMouseMove = (e) => {
+      const now = Date.now();
+      if (now - lastMouseReport < 50) return; // max 20/s
+      lastMouseReport = now;
+      socket.current.emit('mouse-pos-report', { x: e.screenX, y: e.screenY });
+    };
+    window.addEventListener('mousemove', onMouseMove);
+
+    socket.current.on('sensor-initial-data', (incomingSessions) => {
+      setSessions(incomingSessions);
+      console.log('sensorData', incomingSessions);
+      // Seed live sensorData from the most recent session's data
+      const last = incomingSessions[incomingSessions.length - 1];
+      setSensorData(last?.data ?? []);
+      // Auto-select the latest session for playback
+      if (last) setSelectedSession(last);
+    });
+    socket.current.on('sensor-realtime-receive', (entry) => {
+      setSensorData((prev) => [...prev, entry].slice(-1000));
+      // Append to the last session in sessions[]
+      setSessions((prev) => {
+        if (prev.length === 0) return prev;
+        const updated = [...prev];
+        const last = { ...updated[updated.length - 1] };
+        last.data = [...last.data, entry].slice(-1000);
+        updated[updated.length - 1] = last;
+        return updated;
+      });
+    });
+    socket.current.on('sensor-power', (data) => {
+      setMouseEnabled(data.power);
+      // Power ON → start a new session bucket client-side
+      if (data.power) {
+        const newSession = { id: `session_client_${Date.now()}`, startTimestamp: data.timestamp, data: [] };
+        setSessions((prev) => [...prev, newSession]);
+        setSelectedSession(newSession);
+        setSensorData([]);
+      }
+    });
     socket.current.on('mouse-pos', (pos) => setMousePos(pos));
-    socket.current.on('sensor-power', (data) => setMouseEnabled(data.power));
     socket.current.on('sensor-calibration', (calibrationData) => {
       setCalibrationState(calibrationData);
     });
     socket.current.on('sensor-clear', () => setClear(true));
 
-    return () => socket.current.disconnect();
+    return () => {
+      socket.current.disconnect();
+      window.removeEventListener('mousemove', onMouseMove);
+    };
   }, []);
 
   const value = {
     mouseEnabled,
-    sensorData,
+    sensorData,    // flat array: live entries for the current session
+    sessions,      // full history: [{ id, startTimestamp, data[] }]
     enableMouse,
     disableMouse,
     updateSensor,
@@ -57,7 +112,10 @@ export function IMUProvider({ children }) {
     setShowDotmap,
     mousePos,
     clear,
-    setClear
+    setClear,
+    selectedSession,
+    setSelectedSession,
+    selectedSessionData, // live data for the selected session (always fresh)
   };
 
   return <IMUContext.Provider value={value}>{children}</IMUContext.Provider>;
