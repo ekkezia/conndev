@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import paper from "paper";
 import { useIMU } from "../contexts/IMUContext";
+import CalibrationIndicator from "./calibration-indicator";
 
 const UNIT = 25;
 
@@ -282,7 +283,21 @@ export default function DrawingDisplay({ className }) {
   // MOUSE POSITION CURSOR — maps screen coords to canvas
   // =================================================
   useEffect(() => {
-    if (!mousePos || !realtimeLayerRef.current) return;
+    if (!mousePos || !realtimeLayerRef.current || !sensorData) return;
+    
+    let color = {
+      path: new paper.Color(1, 0, 1, 0.8), // fuchsia
+      unCalibratedMouse: new paper.Color(1, 0, 0, 0.8), // red
+      calibratedMouse: new paper.Color(1, 1, 0, 0.9), // yellow
+    }
+
+    let currentMouseColor = color.unCalibratedMouse;
+    // State: calibrated
+    if (sensorData?.[sensorData.length - 1]?.calibrated) {
+      currentMouseColor = color.calibratedMouse;
+    } else {
+      currentMouseColor = color.unCalibratedMouse;
+    }
 
     const canvasWidth = paper.view.size.width;
     const canvasHeight = paper.view.size.height;
@@ -300,7 +315,7 @@ export default function DrawingDisplay({ className }) {
     new paper.Path.Circle({
       center: pt,
       radius: 2.5,
-      fillColor: new paper.Color(1, 0, 1, 0.8), // fuchsia
+      fillColor: color.path, // path: fuchsia
     });
 
     // Update or create the yellow cursor dot (always on top)
@@ -308,7 +323,7 @@ export default function DrawingDisplay({ className }) {
       mouseDotRef.current = new paper.Path.Circle({
         center: pt,
         radius: 6,
-        fillColor: new paper.Color(1, 1, 0, 0.9), // yellow
+        fillColor: currentMouseColor, // red (uncalibrated), yellow (calibrated)
         strokeColor: new paper.Color(1, 1, 1, 0.6),
         strokeWidth: 1.5,
       });
@@ -318,7 +333,7 @@ export default function DrawingDisplay({ className }) {
     mouseDotRef.current.bringToFront();
 
     paper.view.draw();
-  }, [mousePos]);
+  }, [mousePos, sensorData]);
 
   // Helper function to convert HSL to RGB
   function hslToRgb(h, s, l) {
@@ -428,6 +443,8 @@ export default function DrawingDisplay({ className }) {
           🖱 x: {mousePos.x} y: {mousePos.y}
         </div>
       )}
+
+      <CalibrationIndicator />
     </div>
   );
 }

@@ -15,6 +15,7 @@ export function IMUProvider({ children }) {
   const [showDotmap, setShowDotmap] = useState(false);
   const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
   const [clear, setClear] = useState(false);
+  const [calibrationState, setCalibrationState] = useState({ calibrated: false, data: null, timestamp: null });  
 
   const updateSensor = useCallback((newSensor) => {
     setSensorData((s) => [...s.slice(-999), newSensor]);
@@ -32,7 +33,10 @@ export function IMUProvider({ children }) {
     socket.current.on('sensor-realtime-receive', (data) => setSensorData((prev) => [...prev, data].slice(-1000)));
     socket.current.on('mouse-pos', (pos) => setMousePos(pos));
     socket.current.on('sensor-power', (data) => setMouseEnabled(data.power));
-    socket.current.on('sensor-clear', (data) => setClear(true));
+    socket.current.on('sensor-calibration', (calibrationData) => {
+      setCalibrationState(calibrationData);
+    });
+    socket.current.on('sensor-clear', () => setClear(true));
 
     return () => socket.current.disconnect();
   }, []);

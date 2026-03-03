@@ -1,8 +1,9 @@
-// ===============================
-// TCP (Arduino direct connection)
-// ===============================
-const net = require("net");
-const tcpPort = 3000;
+const { db } = require("./firebase.js");
+const { ref, push } = require("firebase/database");
+
+// Throttle Firebase writes — at most once every N ms (Arduino sends at 50Hz = 20/s)
+const FIREBASE_WRITE_INTERVAL = 3000; // ms — 1 write/sec
+let lastFirebaseWrite = 0;
 
 // ===============================
 // Express + Socket.IO
@@ -32,28 +33,17 @@ let sensorData = [];
 const MOCK_MOUSE = false; // 0
 let mouseEnabled = true; // toggle here
 
-  const ROT_GAIN = 0.35;
+  const ROT_GAIN = 5;
   const TILT_GAIN = 3.5;
-  const DEAD_ZONE = 1.2;
-  let lastPitch = null;
-
-// Toggle mouseEnabled with spacebar in the terminal
-const readline = require("readline");
-readline.emitKeypressEvents(process.stdin);
-if (process.stdin.isTTY) process.stdin.setRawMode(true);
-process.stdin.on("keypress", (str, key) => {
-  if (key.name === "space") {
-    mouseEnabled = !mouseEnabled;
-    console.log(`🖱 Mouse control: ${mouseEnabled ? "ENABLED" : "DISABLED"}`);
-  }
-  if (key.ctrl && key.name === "c") process.exit();
-});
+  const DEAD_ZONE = 3;
 
 // lerp target (absolute screen coords)
 let targetX = null;
 let targetY = null; 
 let lerpX = null;
 let lerpY = null;
+
+let calibration = null;
 
 // Lerp loop — runs at ~60fps, slides cursor toward target
 setInterval(() => {
@@ -75,13 +65,6 @@ function processSensorData(parsed, source = "mqtt") {
 
   const data = parsed.sensor;
 
-  // derive movement fields from raw sensor
-  // const posX = Math.sin(data.heading * Math.PI / 180);
-  // const posY = Math.cos(data.heading * Math.PI / 180);
-  const mag  = Math.sqrt(data.gx ** 2 + data.gy ** 2);
-  const CONSTANT_MAG = 10; // hardcode mag for now because it is quiet unstable
-  const effectiveMag = mag < DEAD_ZONE ? 0 : CONSTANT_MAG;
-
   const { width: screenW, height: screenH } = robot.getScreenSize();
 
   // init lerp at current cursor position on first call
@@ -93,60 +76,68 @@ function processSensorData(parsed, source = "mqtt") {
     targetY = mouse.y;
   }
 
-  // advance target by sensor delta and clamp to screen bounds
-  // targetX = Math.max(0, Math.min(targetX + posX * effectiveMag * SENSITIVITY , screenW - 1));
-  // targetY = Math.max(0, Math.min(targetY - posY * effectiveMag * SENSITIVITY , screenH - 1));
-
   // horizontal motion from rotation speed
   // ===== MOTION =====
 
-/// ===== HORIZONTAL (gyro) =====
-const moveX =
-  Math.abs(data.gz) < DEAD_ZONE
-    ? 0
-    : -data.gz * ROT_GAIN;
+  // Wand is moving parallel to ground
 
-
-// ===== VERTICAL (tilt delta) =====
-let moveY = 0;
-
-if (lastPitch === null)
+  // ===== ABSOLUTE ANGLE COMPUTATION =====
+  // heading  → X axis (from magnetometer, already on data)
+  // pitch    → Y axis (derived from accelerometer: angle of tilt up/down)
+  // roll    → not used for mouse control but could be mapped to something else (e.g. scroll, buttons) in the future
+  lastHeading = data.heading;
   lastPitch = data.pitch;
 
-const pitchDelta = data.pitch - lastPitch;
+  if (calibration.calibrated) {
 
-moveY =
-  Math.abs(pitchDelta) < 0.15
-    ? 0
-    : -pitchDelta * TILT_GAIN;
+    // ===== X from heading =====
+    const hRange = angleDiff(
+      calibration.bottomRightHeading,
+      calibration.topLeftHeading
+    );
 
-lastPitch = data.pitch;
+    const hDelta = angleDiff(
+      data.heading,
+      calibration.topLeftHeading
+    );
 
+    const hNorm = hRange !== 0 ? hDelta / hRange : 0.5;
 
-// ===== APPLY + CLAMP =====
-targetX = Math.max(
-  0,
-  Math.min(targetX + moveX, screenW - 1)
-);
+    targetX = Math.round(
+      Math.max(0, Math.min(1, hNorm)) * (screenW - 1)
+    );
 
-targetY = Math.max(
-  0,
-  Math.min(targetY + moveY, screenH - 1)
-);
+    // ===== Y from pitch =====
+    const pRange =
+      calibration.bottomRightPitch - calibration.topLeftPitch;
+
+    const pNorm =
+      pRange !== 0
+        ? (data.pitch - calibration.topLeftPitch) / pRange
+        : 0.5;
+
+    targetY = Math.round(
+      Math.max(0, Math.min(1, 1 - pNorm)) * (screenH - 1)
+    );
+  } else {
+    // ===== FALLBACK: delta mode until calibrated =====
+    const moveX = Math.abs(data.gz) < DEAD_ZONE ? 0 : -data.gz * ROT_GAIN;
+    const moveY = Math.abs(data.gx) < DEAD_ZONE ? 0 : data.gx * ROT_GAIN; // negated: wand up → cursor up
+    targetX = Math.max(0, Math.min(targetX + moveX, screenW - 1));
+    targetY = Math.max(0, Math.min(targetY + moveY, screenH - 1));
+  }
 
   // Sensor Data Shape from Arduino will be just ...data
   // We process the rest here in the server
   return {
     sensor: {
-      ...data,          // gx, gy, ax, ay, heading, fwdHeading, calibrated
-      // posX,             // sin(heading) — direction X
-      // posY,             // cos(heading) — direction Y
-      mag,              // gyro speed magnitude
+      ...data,          // gx, gy, ax, ay, heading, fwdHeading, pitch, roll
       mouseTargetX: targetX,  // absolute mouse target X in screen coords
       mouseTargetY: targetY,  // absolute mouse target Y in screen coords
     },
     screenSize: { width: screenW, height: screenH },
     timestamp: parsed.timestamp || Date.now(),
+    // attach calibraiton
     source,
   };
 }
@@ -181,6 +172,7 @@ const MQTT_TOPIC = "kezia/imu/"; // subtopic = data or power
 const MQTT_SUBTOPIC = {
   DATA: "data",
   CONTROL: "control", // power, clear, click
+  CALIBRATION: "calibration"
 }
 
 const mqttClient = mqtt.connect(MQTT_BROKER, {
@@ -212,6 +204,14 @@ mqttClient.on("connect", () => {
       if (sensorData.length >= 1000) sensorData.shift();
       sensorData.push(entry);
 
+      // Throttled Firebase write — skips writes that come in too fast
+      const now = Date.now();
+      if (now - lastFirebaseWrite >= FIREBASE_WRITE_INTERVAL) {
+        lastFirebaseWrite = now;
+        // push(ref(db, "sensorData"), entry).catch((err) => console.error("Firebase push error:", err.message));
+        // push with calibration data
+      }
+
       console.log("📡 MQTT sensor data:", entry.sensor.pitch);
 
       // emit to socket so frontend can update in real time
@@ -226,17 +226,15 @@ mqttClient.on("connect", () => {
       let parsed;
       try {
         parsed = JSON.parse(message.toString());
+        console.log("🎮 MQTT control message:", parsed);
       } catch (err) {
         console.error("Control message parse error:", err.message);
         return;
       }
 
-      console.log("🎮 MQTT control message:", parsed);
-
       // --- power ---
       if (parsed.power !== undefined) { 
         mouseEnabled = parsed.power === true;
-        console.log(`🖱 Mouse control: ${mouseEnabled ? "ENABLED" : "DISABLED"} (power)`);
         io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
       }
 
@@ -250,13 +248,23 @@ mqttClient.on("connect", () => {
           console.error("robotjs click error:", e.message);
         }
       }
-
-      // --- clear ---
-      if (parsed.clear === true) {
-        console.log("🧹 Clear command received");
-        io.emit("sensor-clear", { timestamp: Date.now() });
-      }
     }
+
+    // Subtopic = calibration
+    if (topic.includes(MQTT_SUBTOPIC.CALIBRATION)) {
+      let parsed;
+      try {
+        parsed = JSON.parse(message.toString());
+        calibration = parsed;
+      } catch (err) {
+        console.error("Calibration message parse error:", err.message);
+        return;
+      }
+
+      console.log(`📐 Calibration update = ${parsed.topLeftRoll}`, parsed.topLeftPitch, parsed.bottomLeftRoll, parsed.bottomLeftPitch); 
+      io.emit("sensor-calibration", { data: { topLeftRoll: parsed.topLeftRoll, topLeftPitch: parsed.topLeftPitch, bottomLeftRoll: parsed.bottomLeftRoll, bottomLeftPitch: parsed.bottomLeftPitch}, timestamp: Date.now() });
+    }
+
   });
 
   mqttClient.on("error", (err) => {
@@ -291,7 +299,7 @@ mqttClient.on("connect", () => {
           ...sensor,
           // posX: Math.sin(sensor.heading * Math.PI / 180),
           // posY: Math.cos(sensor.heading * Math.PI / 180),
-          mag: Math.sqrt(sensor.gx ** 2 + sensor.gy ** 2),
+          // mag: Math.sqrt(sensor.gx ** 2 + sensor.gy ** 2),
         },
         timestamp: Date.now(),
       });
@@ -300,97 +308,6 @@ mqttClient.on("connect", () => {
     }, 50);
   }
 });
-
-// ===============================
-// TCP SERVER [deprecated]
-// ===============================
-// const tcpServer = net.createServer((socket) => {
-//   console.log(
-//     "Arduino connected (TCP):",
-//     socket.remoteAddress + ":" + socket.remotePort
-//   );
-
-//   socket._buffer = "";
-
-//   socket.on("data", (data) => {
-//     try {
-//       socket._buffer += data.toString();
-//       let buf = socket._buffer;
-
-//       let start = buf.indexOf("{");
-
-//       while (start !== -1) {
-//         let depth = 0;
-//         let end = -1;
-
-//         for (let i = start; i < buf.length; i++) {
-//           const ch = buf[i];
-//           if (ch === "{") depth++;
-//           else if (ch === "}") depth--;
-
-//           if (depth === 0) {
-//             end = i;
-//             break;
-//           }
-//         }
-
-//         if (end === -1) break;
-
-//         const piece = buf.slice(start, end + 1);
-//         buf = buf.slice(end + 1);
-
-//         try {
-//           const parsed = JSON.parse(piece);
-
-//           if (parsed?.sensor) {
-
-//             // 🔥 MOVE MOUSE HERE
-//             const data = {
-//               ...parsed.sensor,
-//               posX: Math.sin(parsed.sensor.heading * Math.PI / 180),
-//               posY: Math.cos(parsed.sensor.heading * Math.PI / 180),
-//               mag: Math.sqrt(parsed.sensor.gx ** 2 + parsed.sensor.gy ** 2),
-//             };
-//             const mouseTarget = moveMouseFromIMU(data);
-
-//             const entry = {
-//               sensor: { ...data, ...mouseTarget },
-//               timestamp: parsed.timestamp || Date.now(),
-//               source: "tcp",
-//             };
-
-//             if (sensorData.length >= 1000) sensorData.shift();
-//             sensorData.push(entry);
-
-//             io.emit("sensor-realtime-receive", entry);
-
-//             console.log("🛜 TCP sensor data:", entry);
-//           }
-//         } catch (e) {
-//           console.warn("Malformed TCP JSON:", e.message);
-//         }
-
-//         start = buf.indexOf("{");
-//       }
-
-//       socket._buffer = buf;
-//     } catch (e) {
-//       console.error("TCP processing error:", e.message);
-//     }
-//   });
-
-//   socket.on("end", () => {
-//     console.log("Arduino (TCP) disconnected");
-//   });
-
-//   socket.on("error", (err) => {
-//     console.error("TCP socket error:", err);
-//   });
-// });
-
-// tcpServer.listen(tcpPort, () => {
-//   console.log(`🛜 TCP server running on port ${tcpPort}`);
-// });
 
 // ===============================
 // SOCKET.IO CLIENT HANDLING
@@ -422,3 +339,11 @@ io.on("connection", (socket) => {
 server.listen(port, () => {
   console.log(`🌎 Server running at http://localhost:${port}`);
 });
+
+
+function angleDiff(a, b) {
+  let diff = a - b;
+  while (diff > 180) diff -= 360;
+  while (diff < -180) diff += 360;
+  return diff;
+}
