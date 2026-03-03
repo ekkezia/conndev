@@ -258,8 +258,12 @@ void loop(){
 
       mqttClient.print("\"calibrated\":true}");
 
-      mqttClient.print(",\"timestamp\":");
-      mqttClient.print(timeClient.getEpochTime());
+      mqttClient.print(",\"timestamp\":"); // ms
+      unsigned long long tsMs =
+        (unsigned long long)timeClient.getEpochTime() * 1000ULL +
+        (millis() % 1000);
+
+      mqttClient.print((unsigned long long)tsMs);
       mqttClient.print("}");
 
       mqttClient.endMessage();

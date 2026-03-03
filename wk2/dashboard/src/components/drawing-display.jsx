@@ -285,7 +285,7 @@ export default function DrawingDisplay({ className }) {
   }, [sensorData, playbackMode]);
 
   // =================================================
-  // MOUSE POSITION CURSOR — maps screen coords to canvas
+  // [TODO: NEED TO REVIEW] MOUSE POSITION CURSOR — maps screen coords to canvas
   // =================================================
   useEffect(() => {
     if (!mousePos || !realtimeLayerRef.current || !sensorData) return;
@@ -478,9 +478,17 @@ export default function DrawingDisplay({ className }) {
         resize="true"
         className="w-full h-full bg-gray-400"
       />
-      {mousePos && (
-        <div className="absolute top-2 right-2 bg-black/60 text-yellow-300 font-mono text-xs px-2 py-1 rounded pointer-events-none">
-          🖱 x: {mousePos.x} y: {mousePos.y}
+      {sensorData && sensorData.length > 0 && (
+        <div className="flex absolute top-2 left-1/2 -translate-x-1/2 bg-black/60 text-yellow-300 font-mono text-xs px-2 py-1 rounded pointer-events-none flex flex-col gap-0.5 items-center">
+          {mousePos && <span>🖱 x: {mousePos.x} y: {mousePos.y}</span>}
+          {sensorData?.length > 0 && sensorData[sensorData.length - 1]?.sensor != null && (
+            <span className="text-green-300">
+                🎯 x: {sensorData[sensorData.length - 1].sensor.mouseTargetX?.toFixed(2) ?? '—'} y: {sensorData[sensorData.length - 1].sensor.mouseTargetY?.toFixed(2) ?? '—'}
+              </span>
+            )}
+          {sensorData?.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
+            <span className="text-cyan-300">· sensitivity: {sensorData[sensorData.length - 1].sensor.sensitivity}</span>
+          )}
         </div>
       )}
 

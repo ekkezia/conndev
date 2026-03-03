@@ -96,7 +96,7 @@ setInterval(() => {
 function processSensorData(parsed, source = "mqtt") {
   if (!parsed?.sensor) return null;
   const data = parsed.sensor;
-  const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2);
+  const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2); // Custom magnitude for stroke weight
   const { width: screenW, height: screenH } = clientScreenSize;
 
   // Init to screen center on first entry
@@ -120,6 +120,7 @@ function processSensorData(parsed, source = "mqtt") {
   return {
     sensor: { ...data, mag, mouseTargetX: targetX, mouseTargetY: targetY },
     screenSize: clientScreenSize,
+    // Arduino now sends epoch milliseconds
     timestamp: parsed.timestamp || Date.now(),
     source,
   };

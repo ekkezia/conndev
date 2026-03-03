@@ -81,14 +81,14 @@ export default function GraphDashboard({ className, embedded = false }) {
       <div className="flex items-center gap-2 mb-2 z-50">
         <button onClick={() => setMode('gyro')} className={clsx('px-2 py-1 rounded', mode === 'gyro' ? 'bg-white text-black' : 'bg-black/40 text-white')}>Gyro</button>
         <button onClick={() => setMode('accel')} className={clsx('px-2 py-1 rounded', mode === 'accel' ? 'bg-white text-black' : 'bg-black/40 text-white')}>Accel</button>
-        <button onClick={() => setMode('mag')} className={clsx('px-2 py-1 rounded', mode === 'mag' ? 'bg-white text-black' : 'bg-black/40 text-white')}>Mag</button>
+        <button onClick={() => setMode('heading')} className={clsx('px-2 py-1 rounded', mode === 'heading' ? 'bg-white text-black' : 'bg-black/40 text-white')}>Heading</button>
       </div>
       <div ref={containerRef} className="relative w-full h-full relative overflow-x-scroll overflow-y-hidden">
         {/* left axis showing measurement range -180..180 */}
         <div className="sticky h-[30vh] left-0 top-0 bottom-0 w-14 flex flex-col items-center justify-between text-white text-xs opacity-80 pointer-events-none z-40">
-          <div className="mt-2">{mode === 'gyro' ? 180 : mode === 'accel' ? 180 : mode === 'mag' ? 0 : ''}</div>
+          <div className="mt-2">{mode === 'gyro' ? 180 : mode === 'accel' ? 180 : mode === 'heading' ? 0 : ''}</div>
           <div className="">0</div>
-          <div className="mb-2">{mode === 'gyro' ? -180 : mode === 'accel' ? -180 : mode === 'mag' ? 360 : ''}</div>
+          <div className="mb-2">{mode === 'gyro' ? -180 : mode === 'accel' ? -180 : mode === 'heading' ? 360 : ''}</div>
           <div className="absolute right-0 top-0 bottom-0 w-px bg-white/30" />
         </div>
 
@@ -106,7 +106,7 @@ export default function GraphDashboard({ className, embedded = false }) {
             <SensorGraph keyName="az" color="bg-blue-500/50" kind="accel" />
           </>
         )}
-        {(mode === 'mag') && (
+        {(mode === 'heading') && (
           <>
             <SensorGraph keyName="heading" color="bg-red-500/50" kind="heading" />
           </>
@@ -131,7 +131,7 @@ export default function GraphDashboard({ className, embedded = false }) {
                 <span className="font-mono">Gyro: (X: {s.gx?.toFixed(2) || 'N/A'}, Y: {s.gy?.toFixed(2) || 'N/A'}, Z: {s.gz?.toFixed(2) || 'N/A'})</span>
               ) : (mode === 'accel') ? (
                 <span className="font-mono">Accel: (X: {s.ax?.toFixed(2) || 'N/A'}, Y: {s.ay?.toFixed(2) || 'N/A'}, Z: {s.az?.toFixed(2) || 'N/A'})</span>
-              ) : (mode === 'mag') ? (
+              ) : (mode === 'heading') ? (
                 <span className="font-mono">Magneto: Heading: {s.heading?.toFixed(2) || 'N/A'}</span>
               ) : null}
             </div>

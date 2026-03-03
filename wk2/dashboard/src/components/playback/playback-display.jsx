@@ -208,7 +208,87 @@ export default function PlaybackDisplay({ className }) {
     return () => document.removeEventListener("mousedown", handleClickAway);
   }, [isOpen, setIsOpen]);
 
-  function SensorGraph() {
+  return (
+    <div ref={displayRef}>
+      {/* Session history sidebar */}
+      {isOpen && (
+        <div className="absolute w-72 top-[10%] right-2 bg-black/90 border border-white/10 rounded-xl max-h-[70vh] overflow-y-auto flex flex-col gap-0.5 p-1.5">
+          <div className="text-[10px] text-white/40 font-mono px-2 py-1 uppercase tracking-widest">Sessions</div>
+          {sessions.length === 0 && (
+            <div className="text-[11px] text-white/30 font-mono px-2 py-3 text-center">No sessions yet</div>
+          )}
+          {[...sessions].reverse().map((session) => (
+            <div
+              key={session.id}
+              onClick={() => {
+                const first = session.data[0]?.timestamp;
+                const last = session.data[session.data.length - 1]?.timestamp;
+                console.log('[SessionPreview click]', {
+                  id: session.id,
+                  points: session.data.length,
+                  firstTimestamp: first,
+                  lastTimestamp: last,
+                  durationMs: last - first,
+                  firstDate: first ? new Date(first).toISOString() : null,
+                });
+                setSelectedSession(session);
+              }}
+              className={`rounded-lg outline outline-2 transition-all ${
+                selectedSession?.id === session.id
+                  ? 'outline-fuchsia-500'
+                  : 'outline-transparent'
+              }`}
+            >
+              <SessionPreview session={session} />
+            </div>
+          ))}
+        </div>
+      )}
+      <MenuButton
+        className={clsx(
+          "bottom-4 right-4 z-50",
+          isOpen ? "w-fit h-fit rounded-xl" : "w-12 h-12 rounded-full"
+        )}
+        onClick={!isOpen ? () => setIsOpen(true) : undefined}
+      >
+        {!isOpen && <span className="w-full h-full flex items-center justify-center text-xl">🕘</span>}
+        {isOpen && (
+          <div className={clsx("flex flex-col min-w-[80vw] h-fit p-2 max-w-[80vw] gap-2", className)} onClick={(e) => e.stopPropagation()}>
+            <div className="rounded-lg border border-white/10 bg-black/80 px-3 py-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPlaybackStatus((prev) => ({
+                    ...prev,
+                    isPlaying: !prev.isPlaying,
+                  }));
+                }}
+                className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 transition text-white text-xs font-bold flex items-center justify-center"
+                aria-label={playbackStatus.isPlaying ? "Pause playback" : "Play playback"}
+              >
+                {playbackStatus.isPlaying ? "❚❚" : "▶"}
+              </button>
+              <div className="flex-1">
+                <SensorGraph
+                  clippedSensorData={clippedSensorData}
+                  playbackStatus={playbackStatus}
+                  setPlaybackStatus={setPlaybackStatus}
+                  progressSensorData={progressSensorData}
+                />
+              </div>
+              <div className="text-[11px] font-mono text-white/70 tabular-nums whitespace-nowrap">
+                {formatPlaybackTime(playbackTimes.currentMs)} / {formatPlaybackTime(playbackTimes.totalMs)}
+              </div>
+            </div>
+          </div>
+        )}
+      </MenuButton>
+    </div>
+  );
+}
+
+function SensorGraph({ clippedSensorData, playbackStatus, setPlaybackStatus, progressSensorData }) {
     const [hoverRatio, setHoverRatio] = useState(null);
 
     if (
@@ -241,7 +321,7 @@ export default function PlaybackDisplay({ className }) {
         ...prev,
         currentDataIdx: actualIndex,
         currentTimestamp: actualTimestamp,
-        isPlaying: true,
+        isPlaying: prev.isPlaying, // preserve current play/pause state
       }));
     };
 
@@ -256,6 +336,7 @@ export default function PlaybackDisplay({ className }) {
       <div
         className="h-6 w-full relative flex items-center"
         onClick={(e) => {
+          e.stopPropagation();
           scrubToRatio(getRatioFromPointer(e));
         }}
         onMouseMove={(e) => setHoverRatio(getRatioFromPointer(e))}
@@ -300,69 +381,3 @@ export default function PlaybackDisplay({ className }) {
       </div>
     );
   }
-
-  return (
-    <div ref={displayRef}>
-      {/* Session history sidebar */}
-      {isOpen && (
-        <div className="absolute w-72 top-[10%] right-2 bg-black/90 border border-white/10 rounded-xl max-h-[70vh] overflow-y-auto flex flex-col gap-0.5 p-1.5">
-          <div className="text-[10px] text-white/40 font-mono px-2 py-1 uppercase tracking-widest">Sessions</div>
-          {sessions.length === 0 && (
-            <div className="text-[11px] text-white/30 font-mono px-2 py-3 text-center">No sessions yet</div>
-          )}
-          {[...sessions].reverse().map((session) => (
-            <div
-              key={session.id}
-              onClick={() => {
-                setSelectedSession(session);
-              }}
-              className={`rounded-lg outline outline-2 transition-all ${
-                selectedSession?.id === session.id
-                  ? 'outline-fuchsia-500'
-                  : 'outline-transparent'
-              }`}
-            >
-              <SessionPreview session={session} />
-            </div>
-          ))}
-        </div>
-      )}
-      <MenuButton
-        className={clsx(
-          "bottom-4 right-4 z-50",
-          isOpen ? "w-fit h-fit rounded-xl" : "w-12 h-12 rounded-full"
-        )}
-        onClick={!isOpen ? () => setIsOpen(true) : undefined}
-      >
-        {!isOpen && <span className="w-full h-full flex items-center justify-center text-xl">🕘</span>}
-        {isOpen && (
-          <div className={clsx("flex flex-col min-w-[80vw] h-fit p-2 max-w-[80vw] gap-2", className)} onClick={(e) => e.stopPropagation()}>
-            {/* <h3 className="text-white text-xl font-bold opacity-50 z-0">Dashboard</h3> */}
-            <div className="rounded-lg border border-white/10 bg-black/80 px-3 py-2 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setPlaybackStatus((prev) => ({
-                    ...prev,
-                    isPlaying: !prev.isPlaying,
-                  }));
-                }}
-                className="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 active:scale-95 transition text-white text-xs font-bold flex items-center justify-center"
-                aria-label={playbackStatus.isPlaying ? "Pause playback" : "Play playback"}
-              >
-                {playbackStatus.isPlaying ? "❚❚" : "▶"}
-              </button>
-              <div className="flex-1">
-                <SensorGraph />
-              </div>
-              <div className="text-[11px] font-mono text-white/70 tabular-nums whitespace-nowrap">
-                {formatPlaybackTime(playbackTimes.currentMs)} / {formatPlaybackTime(playbackTimes.totalMs)}
-              </div>
-            </div>
-          </div>
-        )}
-      </MenuButton>
-    </div>
-  );
-}
