@@ -1,11 +1,11 @@
 // ===============================
-// server_relay.js  —  DEPLOYABLE (no robotjs)
+// server_relay.js
 // Handles: MQTT → Socket.IO → Firebase
-// Mouse control is handled by server_mouse_local.js running on each user's machine
+// Mouse control with robotjs is handled by server_mouse_local.js running on each user's machine
 // ===============================
 
 const { db } = require("./firebase.js");
-const { ref, get, set } = require("firebase/database");
+const { ref, get, set, push } = require("firebase/database");
 
 const express = require("express");
 const http = require("http");
@@ -21,15 +21,9 @@ app.use(express.json());
 
 let mouseEnabled = false;
 
-// In-memory session store — mirrors Firebase shape
-// [ { id, startTimestamp, data: [] }, ... ]
-let sessions = [];
-let currentSession = null; // pointer to the active session object
-
 // ===============================
 // Firebase Session Tracking
 // ===============================
-const FIREBASE_FLUSH_INTERVAL = 5000;
 let currentSessionId = null;
 let sessionStartTimestamp = null;
 
@@ -39,10 +33,6 @@ async function startNewSession() {
     const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
     currentSessionId = `session_${count + 1}`;
     sessionStartTimestamp = Date.now();
-    sessionBuffer = [];
-    // Create in-memory session and link Firebase + local
-    currentSession = { id: currentSessionId, startTimestamp: sessionStartTimestamp, data: [] };
-    sessions.push(currentSession);
     await set(ref(db, `sessions/${currentSessionId}/startTimestamp`), sessionStartTimestamp);
     console.log(`📁 Firebase session started: ${currentSessionId}`);
   } catch (err) {
@@ -50,21 +40,15 @@ async function startNewSession() {
   }
 }
 
-function flushSessionToFirebase() {
-  if (!currentSessionId || !currentSession || currentSession.data.length === 0) return;
-  set(ref(db, `sessions/${currentSessionId}/data`), currentSession.data)
-    .catch((err) => console.error("Firebase flush error:", err.message));
-}
-
-function endSession() {
-  flushSessionToFirebase();
-  console.log(`📁 Firebase session ended: ${currentSessionId} (${currentSession?.data.length ?? 0} entries)`);
+async function endSession() {
+  if (currentSessionId) {
+    await set(ref(db, `sessions/${currentSessionId}/endTimestamp`), Date.now())
+      .catch((err) => console.error("Firebase endSession error:", err.message));
+    console.log(`📁 Firebase session ended: ${currentSessionId}`);
+  }
   currentSessionId = null;
   sessionStartTimestamp = null;
-  currentSession = null; // keep historical sessions[] intact for initial-data
 }
-
-setInterval(flushSessionToFirebase, FIREBASE_FLUSH_INTERVAL);
 
 // ===============================
 // Client-reported screen + cursor state
@@ -130,7 +114,16 @@ function processSensorData(parsed, source = "mqtt") {
 // REST
 // ===============================
 app.get("/", (req, res) => res.send({ status: "ok", message: "Hello Magic Wand 🪄" }));
-app.get("/sensor-data", (req, res) => res.json(sessions));
+app.get("/sensor-data", async (req, res) => {
+  try {
+    const snapshot = await get(ref(db, "sessions"));
+    const sessions = snapshot.exists() ? snapshot.val() : {};
+    res.json(sessions);
+  } catch (err) {
+    console.error("GET /sensor-data error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ===============================
 // HTTP + Socket.IO
@@ -170,14 +163,13 @@ mqttClient.on("connect", () => {
         const entry = processSensorData(parsed, "mqtt");
         if (!entry) return;
 
-        let processedEntry = processSensorData(parsed, "mqtt");
-        // Push into current session's data array
-        if (currentSession) {
-          if (currentSession.data.length >= 1000) currentSession.data.shift();
-          currentSession.data.push(processedEntry);
+        // Write directly to Firebase if session is active
+        if (currentSessionId) {
+          push(ref(db, `sessions/${currentSessionId}/data`), entry)
+            .catch((err) => console.error("Firebase data write error:", err.message));
         }
 
-        console.log('📥 ', processedEntry);
+        console.log('📥 ', entry);
 
         io.emit("sensor-realtime-receive", entry);
       } catch (err) {
@@ -222,10 +214,19 @@ mqttClient.on("connect", () => {
 // ===============================
 // Socket.IO
 // ===============================
-io.on("connection", (socket) => {
+io.on("connection", async (socket) => {
   console.log("🔌 Client connected:", socket.id);
 
-  socket.emit("sensor-initial-data", sessions);
+  // Fetch initial sessions from Firebase
+  try {
+    const snapshot = await get(ref(db, "sessions"));
+    const sessions = snapshot.exists() ? snapshot.val() : {};
+    socket.emit("sensor-initial-data", sessions);
+  } catch (err) {
+    console.error("Socket initial data fetch error:", err.message);
+    socket.emit("sensor-initial-data", {});
+  }
+  
   socket.emit("user", { id: socket.id });
 
   // Frontend reports its screen size on connect
