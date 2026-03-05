@@ -23,8 +23,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
-// Auto-detect local vs remote: PORT env var is set by Render, not locally
-const IS_LOCAL = process.env.IS_LOCAL;
+// Auto-detect local vs remote based on SERVER_URL
+const IS_LOCAL = process.env.SERVER_URL?.includes('localhost') ?? false;
+console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`);
 
 let mouseEnabled = false;
 
