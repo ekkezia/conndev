@@ -1,7 +1,6 @@
 import './App.css';
 import MenuButton from './menu-button';
 import DashboardDisplay from './components/dashboard-display';
-import { useIMU } from './contexts/IMUContext';
 import R3FCanvas from './components/r3f-canvas';
 import PlaybackDisplay from './components/playback/playback-display';
 import VisualizationToggle from './components/visualization-toggle';

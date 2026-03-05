@@ -16,6 +16,9 @@ export default function DrawingDisplay({ className }) {
   // ----- REALTIME STATE -----
   const realtimePosRef = useRef(null);
   const realtimePrevRef = useRef(null);
+  const realtimeLerpRef = useRef(null);      // { x, y } current lerp position
+  const realtimeAnimRef = useRef(null);      // animation frame ID
+  const realtimeTargetRef = useRef(null);    // { x, y, mag } target to lerp toward
 
   // ----- PLAYBACK STATE -----
   const playbackPosRef = useRef(null);
@@ -183,6 +186,8 @@ export default function DrawingDisplay({ className }) {
     paper.view.draw();
 
     return () => {
+      if (realtimeAnimRef.current) cancelAnimationFrame(realtimeAnimRef.current);
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       paper.project.clear();
       mouseDotRef.current = null;
       mousePathRef.current = null;
@@ -201,7 +206,17 @@ export default function DrawingDisplay({ className }) {
   useEffect(() => {
     if (!clear || !realtimeLayerRef.current) return;
 
+    // Cancel any in-flight realtime animation
+    if (realtimeAnimRef.current) {
+      cancelAnimationFrame(realtimeAnimRef.current);
+      realtimeAnimRef.current = null;
+    }
+
     realtimeLayerRef.current.removeChildren();
+    realtimePosRef.current = null;
+    realtimePrevRef.current = null;
+    realtimeLerpRef.current = null;
+    realtimeTargetRef.current = null;
     mouseDotRef.current = null;
     paper.view.draw();
 
@@ -211,15 +226,22 @@ export default function DrawingDisplay({ className }) {
 
   useEffect(() => {
     if (!playbackLayerRef.current) return;
+    
+    // Cancel realtime animation when switching to playback
+    if (playbackMode && realtimeAnimRef.current) {
+      cancelAnimationFrame(realtimeAnimRef.current);
+      realtimeAnimRef.current = null;
+    }
+    
     playbackLayerRef.current.visible = playbackMode;
     paper.view.draw();
   }, [playbackMode]);
 
   // =================================================
-  // GENERIC DRAW FUNCTION
+  // GENERIC DRAW FUNCTION — draws smooth curves
   // canvasX/canvasY are already mapped to canvas coordinate space
   // =================================================
-  function drawLine(canvasX, canvasY, mag, layer, posRef, prevRef, opacity = 1) {
+  function drawSmoothedLine(canvasX, canvasY, mag, layer, posRef, prevRef, opacity = 1) {
     if (!layer || !posRef.current || !prevRef.current) return;
     if (isNaN(canvasX) || isNaN(canvasY)) return;
 
@@ -234,7 +256,7 @@ export default function DrawingDisplay({ className }) {
     const motion = mag;
     const maxMotion = 40;
     const maxStrokeWidth = 4;
-    const minStrokeWidth = 0.2;
+    const minStrokeWidth = 0.5;
 
     const strokeWidth =
       ((motion - 0) * (maxStrokeWidth - minStrokeWidth)) / (maxMotion - 0) +
@@ -243,11 +265,12 @@ export default function DrawingDisplay({ className }) {
     // Determine color based on layer
     let strokeColor;
     if (layer === playbackLayerRef.current) {
-      strokeColor = new paper.Color(0, 0, 0, opacity); // black with adjustable opacity
+      strokeColor = new paper.Color(0, 0, 0, opacity); // black
     } else {
-      strokeColor = new paper.Color(1, 0, 1, opacity); // fuchsia with adjustable opacity
+      strokeColor = new paper.Color(1, 0, 1, opacity); // fuchsia
     }
 
+    // Draw smooth curve from previous to current position
     const segment = new paper.Path({
       strokeColor,
       strokeWidth,
@@ -257,14 +280,17 @@ export default function DrawingDisplay({ className }) {
 
     segment.add(prevPos);
     segment.add(pos.clone());
+    segment.smooth(); // Smooth the path for curves
 
+    // Store position and magnitude for next animation frame
     prevRef.current = pos.clone();
+    prevRef.current.mag = mag;
 
     paper.view.draw();
   }
 
   // =================================================
-  // REALTIME MODE — maps screen coords to canvas and draws
+  // REALTIME MODE — maps screen coords to canvas and draws with smooth animation
   // =================================================
   useEffect(() => {
     if (playbackMode || !sensorData || !realtimeLayerRef.current) return;
@@ -281,7 +307,100 @@ export default function DrawingDisplay({ className }) {
     const canvasX = (mouseTargetX / screenW) * canvasW;
     const canvasY = (mouseTargetY / screenH) * canvasH;
 
-    drawLine(canvasX, canvasY, mag, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
+    // Initialize refs on first point
+    if (!realtimePosRef.current) {
+      realtimePosRef.current = new paper.Point(canvasX, canvasY);
+      realtimePrevRef.current = new paper.Point(canvasX, canvasY);
+      realtimePrevRef.current.mag = mag; // store initial magnitude
+      realtimeLerpRef.current = { x: canvasX, y: canvasY };
+      return;
+    }
+
+    // Set new target and start animating toward it
+    realtimeTargetRef.current = { x: canvasX, y: canvasY, mag };
+
+    if (realtimeAnimRef.current) return; // already animating
+
+    // Ensure lerp position is initialized before animating
+    if (!realtimeLerpRef.current) {
+      realtimeLerpRef.current = { x: canvasX, y: canvasY };
+      return; // will animate on next call
+    }
+
+    const LERP_DURATION = 50; // fast lerp for realtime responsiveness
+    const startTime = performance.now();
+    const startX = realtimeLerpRef.current.x;
+    const startY = realtimeLerpRef.current.y;
+    const prevMag = realtimePrevRef.current?.mag ?? 0; // get previous magnitude
+
+    const animate = (now) => {
+      if (!realtimeLayerRef.current || !realtimeTargetRef.current) {
+        realtimeAnimRef.current = null;
+        return;
+      }
+
+      const target = realtimeTargetRef.current;
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / LERP_DURATION, 1);
+      
+      // Ease out for smoother motion
+      const ease = 1 - Math.pow(1 - t, 2);
+
+      const x = startX + (target.x - startX) * ease;
+      const y = startY + (target.y - startY) * ease;
+      const mag = prevMag + (target.mag - prevMag) * ease; // Interpolate magnitude too
+
+      realtimeLerpRef.current = { x, y };
+
+      // Draw if we've moved enough
+      const dx = x - realtimePrevRef.current.x;
+      const dy = y - realtimePrevRef.current.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist > 0.5) {
+        drawSmoothedLine(x, y, mag, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
+      }
+
+      if (t < 1) {
+        realtimeAnimRef.current = requestAnimationFrame(animate);
+      } else {
+        realtimeAnimRef.current = null;
+        // If there's a new target waiting, start new animation
+        if (realtimeTargetRef.current !== target) {
+          const newTarget = realtimeTargetRef.current;
+          const newStartTime = performance.now();
+          const newStartX = realtimeLerpRef.current.x;
+          const newStartY = realtimeLerpRef.current.y;
+          const newStartMag = realtimePrevRef.current?.mag ?? 0;
+          
+          const newAnimate = (now) => {
+            if (!realtimeLayerRef.current || !realtimeTargetRef.current) {
+              realtimeAnimRef.current = null;
+              return;
+            }
+            const t2 = Math.min((now - newStartTime) / LERP_DURATION, 1);
+            const ease2 = 1 - Math.pow(1 - t2, 2);
+            const x2 = newStartX + (newTarget.x - newStartX) * ease2;
+            const y2 = newStartY + (newTarget.y - newStartY) * ease2;
+            const mag2 = newStartMag + (newTarget.mag - newStartMag) * ease2; // Interpolate magnitude
+            realtimeLerpRef.current = { x: x2, y: y2 };
+            const dx2 = x2 - realtimePrevRef.current.x;
+            const dy2 = y2 - realtimePrevRef.current.y;
+            if (Math.sqrt(dx2 * dx2 + dy2 * dy2) > 0.5) {
+              drawSmoothedLine(x2, y2, mag2, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
+            }
+            if (t2 < 1) {
+              realtimeAnimRef.current = requestAnimationFrame(newAnimate);
+            } else {
+              realtimeAnimRef.current = null;
+            }
+          };
+          realtimeAnimRef.current = requestAnimationFrame(newAnimate);
+        }
+      }
+    };
+
+    realtimeAnimRef.current = requestAnimationFrame(animate);
   }, [sensorData, playbackMode]);
 
   // =================================================
@@ -390,7 +509,7 @@ export default function DrawingDisplay({ className }) {
         playbackPrevRef.current = new paper.Point(allPts[0].x, allPts[0].y);
         lerpPosRef.current = { x: allPts[0].x, y: allPts[0].y };
         for (let i = 1; i < allPts.length; i++) {
-          drawLine(allPts[i].x, allPts[i].y, allPts[i].mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+          drawSmoothedLine(allPts[i].x, allPts[i].y, allPts[i].mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
         }
         lerpPosRef.current = { x: allPts[allPts.length - 1].x, y: allPts[allPts.length - 1].y };
         lastDrawnIdxRef.current = upToIdx;
@@ -444,14 +563,14 @@ export default function DrawingDisplay({ className }) {
       const dx = x - playbackPrevRef.current.x;
       const dy = y - playbackPrevRef.current.y;
       if (Math.sqrt(dx * dx + dy * dy) > 0.5) {
-        drawLine(x, y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+        drawSmoothedLine(x, y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
       }
 
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(animate);
       } else {
         // Snap exactly to target
-        drawLine(target.x, target.y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+        drawSmoothedLine(target.x, target.y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
         lerpPosRef.current = { x: target.x, y: target.y };
         lastDrawnIdxRef.current = targetIdx;
         animFrameRef.current = null;

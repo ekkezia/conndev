@@ -4,6 +4,8 @@
 // Mouse control with robotjs is handled by server_mouse_local.js running on each user's machine
 // ===============================
 
+require('dotenv').config();
+
 const { db } = require("./firebase.js");
 const { ref, get, set } = require("firebase/database");
 
@@ -21,9 +23,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
-// Check if running locally - skip Firebase writes if true (to avoid duplicates)
-const IS_LOCAL = process.env.SERVER_URL.includes('http');
-console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`);
+// Auto-detect local vs remote: PORT env var is set by Render, not locally
+const IS_LOCAL = process.env.IS_LOCAL;
 
 let mouseEnabled = false;
 
