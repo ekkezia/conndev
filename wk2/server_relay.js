@@ -5,48 +5,78 @@
 // ===============================
 
 const { db } = require("./firebase.js");
-const { ref, get, set, push } = require("firebase/database");
+const { ref, get, set } = require("firebase/database");
 
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const mqtt = require("mqtt");
+const path = require("path");
 
 const app = express();
 const port = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
 let mouseEnabled = false;
 
 // ===============================
 // Firebase Session Tracking
 // ===============================
-let currentSessionId = null;
+let currentSessionIndex = null;
 let sessionStartTimestamp = null;
 
 async function startNewSession() {
   try {
     const snapshot = await get(ref(db, "sessions"));
-    const count = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
-    currentSessionId = `session_${count + 1}`;
+    const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    currentSessionIndex = sessions.length;
     sessionStartTimestamp = Date.now();
-    await set(ref(db, `sessions/${currentSessionId}/startTimestamp`), sessionStartTimestamp);
-    console.log(`📁 Firebase session started: ${currentSessionId}`);
+    
+    const newSession = {
+      id: `session_${currentSessionIndex + 1}`,
+      startTimestamp: sessionStartTimestamp,
+      data: []
+    };
+    
+    sessions.push(newSession);
+    await set(ref(db, "sessions"), sessions);
+    
+    // Broadcast new session to all connected clients
+    if (typeof io !== 'undefined') {
+      io.emit("session-started", newSession);
+    }
+    
+    console.log(`📁 Firebase session started: ${newSession.id}`);
   } catch (err) {
     console.error("Firebase startNewSession error:", err.message);
   }
 }
 
 async function endSession() {
-  if (currentSessionId) {
-    await set(ref(db, `sessions/${currentSessionId}/endTimestamp`), Date.now())
-      .catch((err) => console.error("Firebase endSession error:", err.message));
-    console.log(`📁 Firebase session ended: ${currentSessionId}`);
+  if (currentSessionIndex !== null) {
+    try {
+      const snapshot = await get(ref(db, "sessions"));
+      const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+      if (sessions[currentSessionIndex]) {
+        sessions[currentSessionIndex].endTimestamp = Date.now();
+        await set(ref(db, "sessions"), sessions);
+        
+        // Broadcast session end to all connected clients
+        if (typeof io !== 'undefined') {
+          io.emit("session-ended", { index: currentSessionIndex, endTimestamp: sessions[currentSessionIndex].endTimestamp });
+        }
+        
+        console.log(`📁 Firebase session ended: ${sessions[currentSessionIndex].id}`);
+      }
+    } catch (err) {
+      console.error("Firebase endSession error:", err.message);
+    }
   }
-  currentSessionId = null;
+  currentSessionIndex = null;
   sessionStartTimestamp = null;
 }
 
@@ -117,7 +147,7 @@ app.get("/", (req, res) => res.send({ status: "ok", message: "Hello Magic Wand �
 app.get("/sensor-data", async (req, res) => {
   try {
     const snapshot = await get(ref(db, "sessions"));
-    const sessions = snapshot.exists() ? snapshot.val() : {};
+    const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
     res.json(sessions);
   } catch (err) {
     console.error("GET /sensor-data error:", err.message);
@@ -155,7 +185,7 @@ mqttClient.on("connect", () => {
     });
   }
 
-  mqttClient.on("message", (topic, message) => {
+  mqttClient.on("message", async (topic, message) => {
     // --- sensor data ---
     if (topic.includes(MQTT_SUBTOPIC.DATA)) {
       try {
@@ -164,9 +194,14 @@ mqttClient.on("connect", () => {
         if (!entry) return;
 
         // Write directly to Firebase if session is active
-        if (currentSessionId) {
-          push(ref(db, `sessions/${currentSessionId}/data`), entry)
-            .catch((err) => console.error("Firebase data write error:", err.message));
+        if (currentSessionIndex !== null) {
+          const snapshot = await get(ref(db, "sessions"));
+          const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+          if (sessions[currentSessionIndex]) {
+            sessions[currentSessionIndex].data.push(entry);
+            await set(ref(db, "sessions"), sessions)
+              .catch((err) => console.error("Firebase data write error:", err.message));
+          }
         }
 
         console.log('📥 ', entry);
@@ -220,11 +255,11 @@ io.on("connection", async (socket) => {
   // Fetch initial sessions from Firebase
   try {
     const snapshot = await get(ref(db, "sessions"));
-    const sessions = snapshot.exists() ? snapshot.val() : {};
+    const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
     socket.emit("sensor-initial-data", sessions);
   } catch (err) {
     console.error("Socket initial data fetch error:", err.message);
-    socket.emit("sensor-initial-data", {});
+    socket.emit("sensor-initial-data", []);
   }
   
   socket.emit("user", { id: socket.id });

@@ -52,7 +52,7 @@ function SessionPreview({ session }) {
   }, [session]);
 
   const duration = useMemo(() => {
-    if (!session?.data?.length) return null;
+    if (!session?.data || !Array.isArray(session.data) || session.data.length === 0) return null;
     const first = session.data[0]?.timestamp;
     const last = session.data[session.data.length - 1]?.timestamp;
     return Number.isFinite(first) && Number.isFinite(last) ? last - first : null;
@@ -75,7 +75,7 @@ function SessionPreview({ session }) {
         <span className="text-[10px] text-white/50 font-mono">
           {session.startTimestamp ? new Date(session.startTimestamp).toLocaleString() : "—"}
         </span>
-        <span className="text-[10px] text-white/40 font-mono">{session.data.length} pts</span>
+        <span className="text-[10px] text-white/40 font-mono">{Array.isArray(session.data) ? session.data.length : 0} pts</span>
       </div>
     </div>
   );
@@ -221,11 +221,12 @@ export default function PlaybackDisplay({ className }) {
             <div
               key={session.id}
               onClick={() => {
-                const first = session.data[0]?.timestamp;
-                const last = session.data[session.data.length - 1]?.timestamp;
+                const data = session.data || [];
+                const first = data[0]?.timestamp;
+                const last = data[data.length - 1]?.timestamp;
                 console.log('[SessionPreview click]', {
                   id: session.id,
-                  points: session.data.length,
+                  points: data.length,
                   firstTimestamp: first,
                   lastTimestamp: last,
                   durationMs: last - first,

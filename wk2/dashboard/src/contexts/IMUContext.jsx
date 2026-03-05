@@ -53,10 +53,18 @@ export function IMUProvider({ children }) {
     window.addEventListener('mousemove', onMouseMove);
 
     socket.current.on('sensor-initial-data', (incomingSessions) => {
-      setSessions(incomingSessions);
-      console.log('sensorData', incomingSessions);
+      let processedIncomingSessions = incomingSessions;
+      // Backward compatibility: convert old object format to array
+      if (!Array.isArray(incomingSessions) && typeof incomingSessions === 'object') {
+        console.log('⚠️ Converting old session format to array');
+        processedIncomingSessions = Object.entries(incomingSessions).map(([id, session]) => ({  id, ...session }));
+      }
+      console.log('📦 Loaded sessions:', processedIncomingSessions.length);
+
+      setSessions(processedIncomingSessions);
+      
       // Seed live sensorData from the most recent session's data
-      const last = incomingSessions[incomingSessions.length - 1];
+      const last = processedIncomingSessions[processedIncomingSessions.length - 1];
       setSensorData(last?.data ?? []);
       // Auto-select the latest session for playback
       if (last) setSelectedSession(last);
@@ -75,13 +83,24 @@ export function IMUProvider({ children }) {
     });
     socket.current.on('sensor-power', (data) => {
       setMouseEnabled(data.power);
-      // Power ON → start a new session bucket client-side
-      if (data.power) {
-        const newSession = { id: `session_client_${Date.now()}`, startTimestamp: data.timestamp, data: [] };
-        setSessions((prev) => [...prev, newSession]);
-        setSelectedSession(newSession);
-        setSensorData([]);
-      }
+      // When power turns off, we don't clear anything - keep sessions for playback
+    });
+    socket.current.on('session-started', (newSession) => {
+      console.log('📁 New session started:', newSession);
+      setSessions((prev) => [...prev, newSession]);
+      setSelectedSession(newSession);
+      setSensorData([]);
+    });
+    socket.current.on('session-ended', (data) => {
+      console.log('📁 Session ended:', data);
+      // Update the endTimestamp for the session at the given index
+      setSessions((prev) => {
+        const updated = [...prev];
+        if (updated[data.index]) {
+          updated[data.index] = { ...updated[data.index], endTimestamp: data.endTimestamp };
+        }
+        return updated;
+      });
     });
     socket.current.on('mouse-pos', (pos) => setMousePos(pos));
     socket.current.on('sensor-calibration', (calibrationData) => {
