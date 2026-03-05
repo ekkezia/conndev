@@ -12,6 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "cors": "^2.8.6",
+    "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "firebase": "^12.10.0",
     "mqtt": "^5.15.0",

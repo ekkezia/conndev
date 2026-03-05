@@ -4,6 +4,8 @@
 // Mouse control with robotjs is handled by server_mouse_local.js running on each user's machine
 // ===============================
 
+require('dotenv').config();
+
 const { db } = require("./firebase.js");
 const { ref, get, set } = require("firebase/database");
 
@@ -21,6 +23,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
+// Check if running locally - skip Firebase writes if true (to avoid duplicates)
+const IS_LOCAL = process.env.IS_LOCAL === 'true';
+console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`);
+
 let mouseEnabled = false;
 
 // ===============================
@@ -31,47 +37,11 @@ let sessionStartTimestamp = null;
 
 async function startNewSession() {
   try {
-    const snapshot = await get(ref(db, "sessions"));
     let sessions = [];
+    let newSession;
     
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      // Firebase stores arrays as objects with numeric keys - convert to array
-      if (typeof data === 'object' && !Array.isArray(data)) {
-        sessions = Object.values(data);
-      } else if (Array.isArray(data)) {
-        sessions = data;
-      }
-    }
-    
-    currentSessionIndex = sessions.length;
-    sessionStartTimestamp = Date.now();
-    
-    const newSession = {
-      id: `session_${currentSessionIndex + 1}`,
-      startTimestamp: sessionStartTimestamp,
-      data: {}
-    };
-    
-    sessions.push(newSession);
-    await set(ref(db, "sessions"), sessions);
-    
-    // Broadcast new session to all connected clients with data as array for consistency
-    if (typeof io !== 'undefined') {
-      io.emit("session-started", { ...newSession, data: [] });
-    }
-    
-    console.log(`📁 Firebase session started: ${newSession.id} (index: ${currentSessionIndex})`);
-  } catch (err) {
-    console.error("Firebase startNewSession error:", err.message);
-  }
-}
-
-async function endSession() {
-  if (currentSessionIndex !== null) {
-    try {
+    if (!IS_LOCAL) {
       const snapshot = await get(ref(db, "sessions"));
-      let sessions = [];
       
       if (snapshot.exists()) {
         const data = snapshot.val();
@@ -83,19 +53,74 @@ async function endSession() {
         }
       }
       
-      if (sessions[currentSessionIndex]) {
-        sessions[currentSessionIndex].endTimestamp = Date.now();
-        await set(ref(db, "sessions"), sessions);
+      currentSessionIndex = sessions.length;
+      sessionStartTimestamp = Date.now();
+      
+      newSession = {
+        id: `session_${currentSessionIndex + 1}`,
+        startTimestamp: sessionStartTimestamp,
+        data: {}
+      };
+      
+      sessions.push(newSession);
+      await set(ref(db, "sessions"), sessions);
+      
+      console.log(`📁 Firebase session started: ${newSession.id} (index: ${currentSessionIndex})`);
+    } else {
+      // Local mode - just track in memory, no Firebase write
+      currentSessionIndex = 0;
+      sessionStartTimestamp = Date.now();
+      newSession = {
+        id: `session_local_${sessionStartTimestamp}`,
+        startTimestamp: sessionStartTimestamp,
+        data: {}
+      };
+      console.log(`📁 Local session started: ${newSession.id} (Firebase writes skipped)`);
+    }
+    
+    // Broadcast new session to all connected clients with data as array for consistency
+    if (typeof io !== 'undefined') {
+      io.emit("session-started", { ...newSession, data: [] });
+    }
+  } catch (err) {
+    console.error("startNewSession error:", err.message);
+  }
+}
+
+async function endSession() {
+  if (currentSessionIndex !== null) {
+    try {
+      const endTimestamp = Date.now();
+      
+      if (!IS_LOCAL) {
+        const snapshot = await get(ref(db, "sessions"));
+        let sessions = [];
         
-        // Broadcast session end to all connected clients
-        if (typeof io !== 'undefined') {
-          io.emit("session-ended", { index: currentSessionIndex, endTimestamp: sessions[currentSessionIndex].endTimestamp });
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          // Firebase stores arrays as objects with numeric keys - convert to array
+          if (typeof data === 'object' && !Array.isArray(data)) {
+            sessions = Object.values(data);
+          } else if (Array.isArray(data)) {
+            sessions = data;
+          }
         }
         
-        console.log(`📁 Firebase session ended: ${sessions[currentSessionIndex].id}`);
+        if (sessions[currentSessionIndex]) {
+          sessions[currentSessionIndex].endTimestamp = endTimestamp;
+          await set(ref(db, "sessions"), sessions);
+          console.log(`📁 Firebase session ended: ${sessions[currentSessionIndex].id}`);
+        }
+      } else {
+        console.log(`📁 Local session ended (Firebase writes skipped)`);
+      }
+      
+      // Broadcast session end to all connected clients
+      if (typeof io !== 'undefined') {
+        io.emit("session-ended", { index: currentSessionIndex, endTimestamp });
       }
     } catch (err) {
-      console.error("Firebase endSession error:", err.message);
+      console.error("endSession error:", err.message);
     }
   }
   currentSessionIndex = null;
@@ -167,6 +192,11 @@ function processSensorData(parsed, source = "mqtt") {
 // ===============================
 app.get("/", (req, res) => res.send({ status: "ok", message: "Hello Magic Wand 🪄" }));
 app.get("/sensor-data", async (req, res) => {
+  if (IS_LOCAL) {
+    console.log("🏠 Local mode - returning empty sessions");
+    return res.json([]);
+  }
+  
   try {
     const snapshot = await get(ref(db, "sessions"));
     let sessions = [];
@@ -226,8 +256,8 @@ mqttClient.on("connect", () => {
         const entry = processSensorData(parsed, "mqtt");
         if (!entry) return;
 
-        // Write directly to Firebase if session is active
-        if (currentSessionIndex !== null) {
+        // Write directly to Firebase if session is active (skip if local)
+        if (currentSessionIndex !== null && !IS_LOCAL) {
           console.log(`📝 Received MQTT data, writing to session ${currentSessionIndex}`);
           const snapshot = await get(ref(db, "sessions"));
           let sessions = [];
@@ -265,6 +295,8 @@ mqttClient.on("connect", () => {
           } else {
             console.warn(`⚠️ Session ${currentSessionIndex} not found in DB (${sessions.length} sessions exist)`);
           }
+        } else if (currentSessionIndex !== null && IS_LOCAL) {
+          console.log(`📡 MQTT data received (local mode - Firebase writes skipped)`);
         } else {
           console.log(`📡 MQTT data received but no active session (power is OFF)`);
         }
@@ -316,24 +348,29 @@ mqttClient.on("connect", () => {
 io.on("connection", async (socket) => {
   console.log("🔌 Client connected:", socket.id);
 
-  // Fetch initial sessions from Firebase
-  try {
-    const snapshot = await get(ref(db, "sessions"));
-    let sessions = [];
-    
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      // Firebase stores arrays as objects with numeric keys - convert to array
-      if (typeof data === 'object' && !Array.isArray(data)) {
-        sessions = Object.values(data);
-      } else if (Array.isArray(data)) {
-        sessions = data;
+  // Fetch initial sessions from Firebase (skip if local)
+  if (!IS_LOCAL) {
+    try {
+      const snapshot = await get(ref(db, "sessions"));
+      let sessions = [];
+      
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        // Firebase stores arrays as objects with numeric keys - convert to array
+        if (typeof data === 'object' && !Array.isArray(data)) {
+          sessions = Object.values(data);
+        } else if (Array.isArray(data)) {
+          sessions = data;
+        }
       }
+      
+      socket.emit("sensor-initial-data", sessions);
+    } catch (err) {
+      console.error("Socket initial data fetch error:", err.message);
+      socket.emit("sensor-initial-data", []);
     }
-    
-    socket.emit("sensor-initial-data", sessions);
-  } catch (err) {
-    console.error("Socket initial data fetch error:", err.message);
+  } else {
+    console.log("🏠 Local mode - skipping Firebase read, sending empty sessions");
     socket.emit("sensor-initial-data", []);
   }
   
@@ -364,4 +401,4 @@ io.on("connection", async (socket) => {
 // ===============================
 // START
 // ===============================
-server.listen(port, () => console.log(`🌎 Relay server running at http://localhost:${port}`));
+server.listen(port, () => console.log(`🌎 Local server running at http://localhost:${port}`));
