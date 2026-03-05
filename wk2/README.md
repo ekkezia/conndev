@@ -3,15 +3,21 @@
 This repository contains a Week 1 response for the Connected Devices class.
 
 Overview
-- Arduino reads two analog sensors on pins A0 and A1.
-- The Arduino sends sensor values over WiFi using a TCP connection. See the wifi_tcp folder and open the sketch in the Arduino IDE.
+- Arduino reads Nano 33 IoT's internal IMU and LSM303D magnetometer sensor
+- The Arduino code sends sensor values as message over WiFi using a MQTT connection. 
 - Sensor on A0 drives the X position of the spotlight; sensor on A1 drives the Y position of the spotlight.
 - Clicking the canvas toggles between showing the camera feed and loading a random Wikipedia entry.
 
 Usage
-1. Open [wifi_tcp/wifi_tcp.ino](wifi_tcp/wifi_tcp.ino) in the Arduino IDE, edit `arduino_secrets.h` with your network credentials, and upload to your board.
-2. Open `index.html` in a browser on a machine on the same network as the Arduino/TCP server.
-3. Move the sensors connected to A0/A1 to control the spotlight; click the canvas to toggle camera/wiki.
+1. Open [magic_wand_v3.5](magic_wand_3.5) in the Arduino IDE, edit `arduino_secrets.h` with your network credentials, and upload to your board.
+2. Go to [dashboard](dashboard), install `npm install` and run `npm start`
+3. Running the server:
+a. Deployed:
+   - Create `env` and specify `SERVER_URL` with your server url. Mine is deployed on Render (contact me for details).
+b. Local:
+   -  Run locally with `node server_relay.js`
+   -  A version that enables mouse control is available by running `node mouse.js`. Install `robotjs` before using this. Mind that this version cannot be deployed to production because you can only control your mouse locally.
+
 
 Files
 - [index.html](index.html)
