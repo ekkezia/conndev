@@ -32,25 +32,36 @@ let sessionStartTimestamp = null;
 async function startNewSession() {
   try {
     const snapshot = await get(ref(db, "sessions"));
-    const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    let sessions = [];
+    
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      // Firebase stores arrays as objects with numeric keys - convert to array
+      if (typeof data === 'object' && !Array.isArray(data)) {
+        sessions = Object.values(data);
+      } else if (Array.isArray(data)) {
+        sessions = data;
+      }
+    }
+    
     currentSessionIndex = sessions.length;
     sessionStartTimestamp = Date.now();
     
     const newSession = {
       id: `session_${currentSessionIndex + 1}`,
       startTimestamp: sessionStartTimestamp,
-      data: []
+      data: {}
     };
     
     sessions.push(newSession);
     await set(ref(db, "sessions"), sessions);
     
-    // Broadcast new session to all connected clients
+    // Broadcast new session to all connected clients with data as array for consistency
     if (typeof io !== 'undefined') {
-      io.emit("session-started", newSession);
+      io.emit("session-started", { ...newSession, data: [] });
     }
     
-    console.log(`📁 Firebase session started: ${newSession.id}`);
+    console.log(`📁 Firebase session started: ${newSession.id} (index: ${currentSessionIndex})`);
   } catch (err) {
     console.error("Firebase startNewSession error:", err.message);
   }
@@ -60,7 +71,18 @@ async function endSession() {
   if (currentSessionIndex !== null) {
     try {
       const snapshot = await get(ref(db, "sessions"));
-      const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+      let sessions = [];
+      
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        // Firebase stores arrays as objects with numeric keys - convert to array
+        if (typeof data === 'object' && !Array.isArray(data)) {
+          sessions = Object.values(data);
+        } else if (Array.isArray(data)) {
+          sessions = data;
+        }
+      }
+      
       if (sessions[currentSessionIndex]) {
         sessions[currentSessionIndex].endTimestamp = Date.now();
         await set(ref(db, "sessions"), sessions);
@@ -147,7 +169,18 @@ app.get("/", (req, res) => res.send({ status: "ok", message: "Hello Magic Wand �
 app.get("/sensor-data", async (req, res) => {
   try {
     const snapshot = await get(ref(db, "sessions"));
-    const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    let sessions = [];
+    
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      // Firebase stores arrays as objects with numeric keys - convert to array
+      if (typeof data === 'object' && !Array.isArray(data)) {
+        sessions = Object.values(data);
+      } else if (Array.isArray(data)) {
+        sessions = data;
+      }
+    }
+    
     res.json(sessions);
   } catch (err) {
     console.error("GET /sensor-data error:", err.message);
@@ -195,17 +228,48 @@ mqttClient.on("connect", () => {
 
         // Write directly to Firebase if session is active
         if (currentSessionIndex !== null) {
+          console.log(`📝 Received MQTT data, writing to session ${currentSessionIndex}`);
           const snapshot = await get(ref(db, "sessions"));
-          const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
-          if (sessions[currentSessionIndex]) {
-            sessions[currentSessionIndex].data.push(entry);
-            await set(ref(db, "sessions"), sessions)
-              .catch((err) => console.error("Firebase data write error:", err.message));
+          let sessions = [];
+          
+          if (snapshot.exists()) {
+            const data = snapshot.val();
+            // Firebase stores arrays as objects with numeric keys - convert to array
+            if (typeof data === 'object' && !Array.isArray(data)) {
+              sessions = Object.values(data);
+            } else if (Array.isArray(data)) {
+              sessions = data;
+            }
           }
+          
+          console.log(`   Sessions in DB: ${sessions.length}, Current index: ${currentSessionIndex}`);
+          
+          if (sessions[currentSessionIndex]) {
+            console.log(`   Session found: ${sessions[currentSessionIndex].id}`);
+            if (!sessions[currentSessionIndex].data) {
+              sessions[currentSessionIndex].data = {};
+            }
+            // Firebase converts objects with numeric keys to/from arrays
+            if (typeof sessions[currentSessionIndex].data === 'object' && !Array.isArray(sessions[currentSessionIndex].data)) {
+              // It's a Firebase object - add entry with auto-generated key
+              const dataLength = Object.keys(sessions[currentSessionIndex].data).length;
+              sessions[currentSessionIndex].data[dataLength] = entry;
+            } else {
+              // It's an array - push normally
+              sessions[currentSessionIndex].data.push(entry);
+            }
+            
+            await set(ref(db, "sessions"), sessions)
+              .then(() => console.log(`   ✅ Data written to Firebase`))
+              .catch((err) => console.error(`   ❌ Firebase write error: ${err.message}`));
+          } else {
+            console.warn(`⚠️ Session ${currentSessionIndex} not found in DB (${sessions.length} sessions exist)`);
+          }
+        } else {
+          console.log(`📡 MQTT data received but no active session (power is OFF)`);
         }
 
-        console.log('📥 ', entry);
-
+        console.log('📥 Emitting to clients');
         io.emit("sensor-realtime-receive", entry);
       } catch (err) {
         console.error("MQTT data parse error:", err.message);
@@ -255,7 +319,18 @@ io.on("connection", async (socket) => {
   // Fetch initial sessions from Firebase
   try {
     const snapshot = await get(ref(db, "sessions"));
-    const sessions = snapshot.exists() && Array.isArray(snapshot.val()) ? snapshot.val() : [];
+    let sessions = [];
+    
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      // Firebase stores arrays as objects with numeric keys - convert to array
+      if (typeof data === 'object' && !Array.isArray(data)) {
+        sessions = Object.values(data);
+      } else if (Array.isArray(data)) {
+        sessions = data;
+      }
+    }
+    
     socket.emit("sensor-initial-data", sessions);
   } catch (err) {
     console.error("Socket initial data fetch error:", err.message);

@@ -243,7 +243,7 @@ export default function DrawingDisplay({ className }) {
     // Determine color based on layer
     let strokeColor;
     if (layer === playbackLayerRef.current) {
-      strokeColor = new paper.Color(0, 1, 1, opacity); // cyan with adjustable opacity
+      strokeColor = new paper.Color(0, 0, 0, opacity); // black with adjustable opacity
     } else {
       strokeColor = new paper.Color(1, 0, 1, opacity); // fuchsia with adjustable opacity
     }
@@ -316,14 +316,7 @@ export default function DrawingDisplay({ className }) {
 
     const pt = new paper.Point(canvasX, canvasY);
 
-    // Draw a small filled dot at this position (same technique as playback which works)
-    new paper.Path.Circle({
-      center: pt,
-      radius: 2.5,
-      fillColor: color.path, // path: fuchsia
-    });
-
-    // Update or create the yellow cursor dot (always on top)
+    // Update or create the red cursor dot (always on top)
     if (!mouseDotRef.current) {
       mouseDotRef.current = new paper.Path.Circle({
         center: pt,
@@ -342,7 +335,7 @@ export default function DrawingDisplay({ className }) {
 
   // =================================================
   // PLAYBACK — reset layer when session changes
-  // =================================================
+  // ============================================n=====
   useEffect(() => {
     if (!playbackLayerRef.current) return;
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -481,14 +474,25 @@ export default function DrawingDisplay({ className }) {
       {sensorData && sensorData.length > 0 && (
         <div className="flex absolute top-2 left-1/2 -translate-x-1/2 bg-black/60 text-yellow-300 font-mono text-xs px-2 py-1 rounded pointer-events-none flex flex-col gap-0.5 items-center">
           {mousePos && <span>🖱 x: {mousePos.x} y: {mousePos.y}</span>}
+          
+          {sensorData?.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
+            <div className="w-48 flex items-center gap-2">
+              <span className="text-cyan-300 text-[10px] whitespace-nowrap">sensitivity</span>
+              <div className="flex-1 h-2 bg-black border border-cyan-300 rounded overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-cyan-500 to-cyan-300"
+                  style={{ width: `${(sensorData[sensorData.length - 1].sensor.sensitivity / 10) * 100}%` }}
+                />
+              </div>
+              <span className="text-cyan-300 text-[10px] w-6 text-right">{sensorData[sensorData.length - 1].sensor.sensitivity.toFixed(1)}</span>
+            </div>
+          )}
+          
           {sensorData?.length > 0 && sensorData[sensorData.length - 1]?.sensor != null && (
             <span className="text-green-300">
                 🎯 x: {sensorData[sensorData.length - 1].sensor.mouseTargetX?.toFixed(2) ?? '—'} y: {sensorData[sensorData.length - 1].sensor.mouseTargetY?.toFixed(2) ?? '—'}
               </span>
             )}
-          {sensorData?.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
-            <span className="text-cyan-300">· sensitivity: {sensorData[sensorData.length - 1].sensor.sensitivity}</span>
-          )}
         </div>
       )}
 

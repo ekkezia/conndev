@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "wk2/dashboard/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "wk2/dashboard/build"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/wk2/dashboard/build/$1"
+    }
+  ]
+}

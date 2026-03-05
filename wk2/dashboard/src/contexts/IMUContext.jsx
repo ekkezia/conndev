@@ -17,6 +17,7 @@ export function IMUProvider({ children }) {
   const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
   const [clear, setClear] = useState(false);
   const [calibrationState, setCalibrationState] = useState({ calibrated: false, data: null, timestamp: null });
+  const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
 
   // Always-fresh data for the selected session — derived by looking up sessions[] by ID
   // (selectedSession itself is a stale snapshot; sessions[] is the live source of truth)
@@ -59,6 +60,15 @@ export function IMUProvider({ children }) {
         console.log('⚠️ Converting old session format to array');
         processedIncomingSessions = Object.entries(incomingSessions).map(([id, session]) => ({  id, ...session }));
       }
+      
+      // Ensure each session's data is an array (Firebase stores as object with numeric keys)
+      processedIncomingSessions = processedIncomingSessions.map(session => ({
+        ...session,
+        data: session.data && typeof session.data === 'object' && !Array.isArray(session.data) 
+          ? Object.values(session.data) 
+          : (Array.isArray(session.data) ? session.data : [])
+      }));
+      
       console.log('📦 Loaded sessions:', processedIncomingSessions.length);
 
       setSessions(processedIncomingSessions);
@@ -87,20 +97,53 @@ export function IMUProvider({ children }) {
     });
     socket.current.on('session-started', (newSession) => {
       console.log('📁 New session started:', newSession);
-      setSessions((prev) => [...prev, newSession]);
-      setSelectedSession(newSession);
-      setSensorData([]);
-    });
-    socket.current.on('session-ended', (data) => {
-      console.log('📁 Session ended:', data);
-      // Update the endTimestamp for the session at the given index
+      // Ensure data is array and prevent duplicates
       setSessions((prev) => {
-        const updated = [...prev];
-        if (updated[data.index]) {
-          updated[data.index] = { ...updated[data.index], endTimestamp: data.endTimestamp };
+        // Check if session already exists
+        const exists = prev.some(s => s.id === newSession.id);
+        if (exists) {
+          console.warn('⚠️ Session already exists, skipping duplicate');
+          return prev;
         }
-        return updated;
+        const sessionWithArrayData = {
+          ...newSession,
+          data: Array.isArray(newSession.data) ? newSession.data : []
+        };
+        return [...prev, sessionWithArrayData];
       });
+      setSelectedSession({ ...newSession, data: [] });
+      setSensorData([]);
+      setSessionsUpdated(Date.now()); // Trigger update notification
+    });
+    socket.current.on('session-ended', async (data) => {
+      console.log('📁 Session ended:', data);
+      // Fetch fresh session data from server to ensure sync
+      try {
+        const response = await fetch(`${SERVER_URL}/sensor-data`);
+        const freshSessions = await response.json();
+        
+        // Convert data to arrays if needed
+        const processedSessions = freshSessions.map(session => ({
+          ...session,
+          data: session.data && typeof session.data === 'object' && !Array.isArray(session.data) 
+            ? Object.values(session.data) 
+            : (Array.isArray(session.data) ? session.data : [])
+        }));
+        
+        setSessions(processedSessions);
+        setSessionsUpdated(Date.now()); // Trigger update notification
+        console.log('✅ Sessions refreshed after session end');
+      } catch (err) {
+        console.error('Failed to refresh sessions:', err);
+        // Fallback: update by index
+        setSessions((prev) => {
+          const updated = [...prev];
+          if (updated[data.index]) {
+            updated[data.index] = { ...updated[data.index], endTimestamp: data.endTimestamp };
+          }
+          return updated;
+        });
+      }
     });
     socket.current.on('mouse-pos', (pos) => setMousePos(pos));
     socket.current.on('sensor-calibration', (calibrationData) => {
@@ -135,6 +178,7 @@ export function IMUProvider({ children }) {
     selectedSession,
     setSelectedSession,
     selectedSessionData, // live data for the selected session (always fresh)
+    sessionsUpdated, // timestamp for animation/update detection
   };
 
   return <IMUContext.Provider value={value}>{children}</IMUContext.Provider>;

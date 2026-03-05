@@ -17,14 +17,27 @@ function SessionPreview({ session }) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !session?.data?.length) return;
+    if (!canvas) return;
+    
+    // Convert data to array if it's a Firebase object
+    let dataArray = [];
+    if (session?.data) {
+      if (Array.isArray(session.data)) {
+        dataArray = session.data;
+      } else if (typeof session.data === 'object') {
+        dataArray = Object.values(session.data);
+      }
+    }
+    
+    if (dataArray.length === 0) return;
+    
     const ctx = canvas.getContext("2d");
     const W = canvas.width;
     const H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
     // Collect valid points mapped to canvas space
-    const points = session.data
+    const points = dataArray
       .filter((e) => e?.sensor?.mouseTargetX != null && e?.screenSize)
       .map((e) => ({
         x: (e.sensor.mouseTargetX / e.screenSize.width) * W,
@@ -45,23 +58,32 @@ function SessionPreview({ session }) {
       ctx.beginPath();
       ctx.moveTo(prev.x, prev.y);
       ctx.lineTo(curr.x, curr.y);
-      ctx.strokeStyle = "rgba(255, 0, 255, 0.85)";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.85)";
       ctx.lineWidth = width;
       ctx.stroke();
     }
   }, [session]);
 
   const duration = useMemo(() => {
-    if (!session?.data || !Array.isArray(session.data) || session.data.length === 0) return null;
-    const first = session.data[0]?.timestamp;
-    const last = session.data[session.data.length - 1]?.timestamp;
+    let dataArray = [];
+    if (session?.data) {
+      if (Array.isArray(session.data)) {
+        dataArray = session.data;
+      } else if (typeof session.data === 'object') {
+        dataArray = Object.values(session.data);
+      }
+    }
+    
+    if (dataArray.length === 0) return null;
+    const first = dataArray[0]?.timestamp;
+    const last = dataArray[dataArray.length - 1]?.timestamp;
     return Number.isFinite(first) && Number.isFinite(last) ? last - first : null;
   }, [session]);
 
   return (
     <div className="flex gap-2 items-center p-2 rounded-lg hover:bg-white/5 cursor-pointer transition">
       {/* Thumbnail */}
-      <div className="relative flex-shrink-0 rounded overflow-hidden bg-black border border-white/10" style={{ width: 120, height: 68 }}>
+      <div className="relative flex-shrink-0 rounded overflow-hidden bg-gray-400 border border-white/10" style={{ width: 120, height: 68 }}>
         <canvas ref={canvasRef} width={120} height={68} className="w-full h-full" />
         {duration != null && (
           <span className="absolute bottom-1 right-1 text-[9px] font-mono bg-black/80 text-white px-1 rounded">
@@ -75,7 +97,7 @@ function SessionPreview({ session }) {
         <span className="text-[10px] text-white/50 font-mono">
           {session.startTimestamp ? new Date(session.startTimestamp).toLocaleString() : "—"}
         </span>
-        <span className="text-[10px] text-white/40 font-mono">{Array.isArray(session.data) ? session.data.length : 0} pts</span>
+        <span className="text-[10px] text-white/40 font-mono">{Array.isArray(session.data) ? session.data.length : (typeof session.data === 'object' ? Object.keys(session.data).length : 0)} pts</span>
       </div>
     </div>
   );
@@ -91,11 +113,22 @@ export default function PlaybackDisplay({ className }) {
     selectedSession,
     setSelectedSession,
     selectedSessionData,
+    sessionsUpdated,
   } = useIMU();
 
   // Always-fresh data for the selected session (derived live in IMUContext)
   const activeData = selectedSessionData;
   const displayRef = useRef(null);
+  const [sessionsPulse, setSessionsPulse] = useState(false);
+
+  // Trigger pulse animation when sessions are updated
+  useEffect(() => {
+    if (sessionsUpdated) {
+      setSessionsPulse(true);
+      const timer = setTimeout(() => setSessionsPulse(false), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [sessionsUpdated]);
 
   // Reset playback head whenever the active data source changes
   useEffect(() => {
@@ -212,7 +245,7 @@ export default function PlaybackDisplay({ className }) {
     <div ref={displayRef}>
       {/* Session history sidebar */}
       {isOpen && (
-        <div className="absolute w-72 top-[10%] right-2 bg-black/90 border border-white/10 rounded-xl max-h-[70vh] overflow-y-auto flex flex-col gap-0.5 p-1.5">
+        <div className={`absolute w-72 top-[10%] right-2 bg-black/90 border border-white/10 rounded-xl max-h-[70vh] overflow-y-auto flex flex-col gap-0.5 p-1.5 transition-all duration-300 ${sessionsPulse ? 'ring-2 ring-cyan-400/50' : ''}`}>
           <div className="text-[10px] text-white/40 font-mono px-2 py-1 uppercase tracking-widest">Sessions</div>
           {sessions.length === 0 && (
             <div className="text-[11px] text-white/30 font-mono px-2 py-3 text-center">No sessions yet</div>
@@ -221,7 +254,14 @@ export default function PlaybackDisplay({ className }) {
             <div
               key={session.id}
               onClick={() => {
-                const data = session.data || [];
+                let data = [];
+                if (session.data) {
+                  if (Array.isArray(session.data)) {
+                    data = session.data;
+                  } else if (typeof session.data === 'object') {
+                    data = Object.values(session.data);
+                  }
+                }
                 const first = data[0]?.timestamp;
                 const last = data[data.length - 1]?.timestamp;
                 console.log('[SessionPreview click]', {

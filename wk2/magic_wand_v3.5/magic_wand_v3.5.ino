@@ -201,8 +201,7 @@ void loop(){
       // CONTROL: Calibrate Top Left & Bottom Right
       if(millis()-calPressStart>=shortPressTime && millis()-calPressStart<shortPressTime+100){
 
-      Serial.print("[CALIBRATE POINT]"); // only allow clicking after calibration (whe power is fully ON)
-      Serial.println("Top Left");
+      Serial.print("[CLICK]"); // only allow clicking after calibration (whe power is fully ON)
 
       digitalWrite(powerLedPin, LOW); // for now we make it go low->high bcs the power indicator is always ON usually (if user is on and done calibrating)
       delay(50);
@@ -213,7 +212,7 @@ void loop(){
 
     // CONTROL: Click
     if(millis()-resetPressStart>=shortPressTime && millis()-resetPressStart<shortPressTime+100){
-      Serial.println("[CLICK]");
+      Serial.println("[CLEAR]");
 
       digitalWrite(calibrateLedPin, HIGH); // for now we make it go low->high bcs the power indicator is always ON usually (if user is on and done calibrating)
       delay(50);
@@ -267,10 +266,10 @@ void loop(){
       mqttClient.print("}");
 
       mqttClient.endMessage();
+          Serial.println(heading);
+
     }
   }
-
-    // Serial.println(heading);
 
 }
 
