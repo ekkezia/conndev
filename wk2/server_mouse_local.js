@@ -9,7 +9,7 @@ const { spawn } = require("child_process");
 const { io: ioClient } = require("socket.io-client");
 
 // Point this at your deployed relay (or localhost for dev)
-const RELAY_URL = process.env.RELAY_URL || "http://localhost:4000";
+const RELAY_URL = process.env.REACT_APP_SERVER_URL || "http://localhost:4000";
 
 const socket = ioClient(RELAY_URL);
 

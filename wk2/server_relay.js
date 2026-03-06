@@ -23,8 +23,8 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
-// Auto-detect local vs remote based on SERVER_URL
-const IS_LOCAL = process.env.SERVER_URL?.includes('localhost') ?? false;
+// Auto-detect local vs remote based on REACT_APP_SERVER_URL
+const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
 console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`);
 
 let mouseEnabled = false;
@@ -401,4 +401,4 @@ io.on("connection", async (socket) => {
 // ===============================
 // START
 // ===============================
-server.listen(port, () => console.log(`🌎 Server running at ${process.env.SERVER_URL}`));
+server.listen(port, () => console.log(`🌎 Server running at ${process.env.REACT_APP_SERVER_URL}`));

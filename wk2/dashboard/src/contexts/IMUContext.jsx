@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
 import { useEffect } from 'react';
 import { io } from 'socket.io-client';
-import { SERVER_URL } from '../config';
+import { REACT_APP_SERVER_URL } from '../config';
 
 const IMUContext = createContext(null);
 
@@ -38,7 +38,7 @@ export function IMUProvider({ children }) {
   const socket = useRef(null);
 
   useEffect(() => {
-    socket.current = io(SERVER_URL);
+    socket.current = io(REACT_APP_SERVER_URL);
 
     // Report screen size immediately so server can use it for mouse mapping
     socket.current.emit('screen-size', { width: window.screen.width, height: window.screen.height });
@@ -119,7 +119,7 @@ export function IMUProvider({ children }) {
       console.log('📁 Session ended:', data);
       // Fetch fresh session data from server to ensure sync
       try {
-        const response = await fetch(`${SERVER_URL}/sensor-data`);
+        const response = await fetch(`${REACT_APP_SERVER_URL}/sensor-data`);
         const freshSessions = await response.json();
         
         // Convert data to arrays if needed

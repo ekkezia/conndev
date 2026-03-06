@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { SERVER_URL } from '../config';
+import { REACT_APP_SERVER_URL } from '../config';
 
 export default function Remote() {
   const [status, setStatus] = useState('disconnected');
@@ -11,7 +11,7 @@ export default function Remote() {
   const [motionEnabled, setMotionEnabled] = useState(false);
 
   useEffect(() => {
-    socket.current = io(SERVER_URL);
+    socket.current = io(REACT_APP_SERVER_URL);
 
     socket.current.on('connect', () => setStatus('connected'));
     socket.current.on('disconnect', () => setStatus('disconnected'));

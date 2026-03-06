@@ -6,7 +6,7 @@ import PlaybackDisplay from './components/playback/playback-display';
 import VisualizationToggle from './components/visualization-toggle';
 import { useRef, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
-import { SERVER_URL } from './config';
+import { REACT_APP_SERVER_URL } from './config';
 import DrawingDisplay from './components/drawing-display';
 
 function App() {
@@ -18,7 +18,7 @@ function App() {
   const [status, setStatus] = useState('disconnected');
 
   useEffect(() => {
-    socket.current = io(SERVER_URL);
+    socket.current = io(REACT_APP_SERVER_URL);
 
     socket.current.on('connect', () => setStatus('connected'));
     socket.current.on('disconnect', () => setStatus('disconnected'));
