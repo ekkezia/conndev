@@ -91,10 +91,6 @@ export function IMUProvider({ children }) {
         return updated;
       });
     });
-    socket.current.on('sensor-power', (data) => {
-      setMouseEnabled(data.power);
-      // When power turns off, we don't clear anything - keep sessions for playback
-    });
     socket.current.on('session-started', (newSession) => {
       console.log('📁 New session started:', newSession);
       // Ensure data is array and prevent duplicates
