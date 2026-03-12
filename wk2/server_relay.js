@@ -274,7 +274,7 @@ mqttClient.on("connect", () => {
             }
           }
           
-          console.log(`   Sessions in DB: ${sessions.length}, Current index: ${currentSessionIndex}`);
+          console.log(`Sessions in DB: ${sessions.length}, Current index: ${currentSessionIndex}`);
           
           if (sessions[currentSessionIndex]) {
             console.log(`   Session found: ${sessions[currentSessionIndex].id}`);
@@ -310,34 +310,40 @@ mqttClient.on("connect", () => {
       }
     }
 
-    // --- control ---
+    // --- CONTROL ---
+    // power - last will will be false (when device is off)
+    // draw: "start" | "stop"
+    // click: true (one-time)
     if (topic.includes(MQTT_SUBTOPIC.CONTROL)) {
       let parsed;
       try { parsed = JSON.parse(message.toString()); }
       catch (err) { console.error("MQTT control parse error:", err.message); return; }
 
-      console.log("🎮 Control:", parsed);
-
       if (parsed.power !== undefined) {
         const wasEnabled = mouseEnabled;
         mouseEnabled = parsed.power === true;
-        io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
+        // io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
         console.log(`🖱 Power: ${mouseEnabled ? "ON" : "OFF"}`);
 
         if (!wasEnabled && mouseEnabled) startNewSession();
         else if (wasEnabled && !mouseEnabled) endSession();
       }
 
-      if (parsed.click === true) {
-        // relay click to local mouse agent(s)
-        io.emit("mouse-click");
-        console.log("🖱 Click relayed");
+      if (parsed.draw !== undefined) {
+        io.emit("sensor-draw", { draw: parsed.draw, timestamp: Date.now() });
+        console.log(`✍🏻 Draw: ${parsed.draw}`);
       }
 
-      if (parsed.clear === true) {
-        io.emit("sensor-clear", { timestamp: Date.now() });
-        console.log("🧹 Clear relayed");
+      if (parsed.click === true) {
+        // relay click to local mouse agent(s)
+        // io.emit("sensor-click", { timestamp: Date.now() });
+        // console.log("🖱 Click relayed");
       }
+
+      // if (parsed.clear === true) {
+      //   io.emit("sensor-clear", { timestamp: Date.now() });
+      //   console.log("🧹 Clear relayed");
+      // }
     }
   });
 

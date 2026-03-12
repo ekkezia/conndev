@@ -129,7 +129,7 @@ socket.on("sensor-power", (data) => {
   console.log(`🖱 Power from relay: ${mouseEnabled ? "ON" : "OFF"}`);
 });
 
-socket.on("mouse-click", () => {
+socket.on("sensor-click", () => {
   try {
     robot.mouseClick();
     spawn("afplay", ["/System/Library/Sounds/Tink.aiff"], { detached: true, stdio: "ignore" }).unref();

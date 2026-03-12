@@ -16,7 +16,7 @@ export function IMUProvider({ children }) {
   const [showDotmap, setShowDotmap] = useState(false);
   const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
   const [clear, setClear] = useState(false);
-  const [calibrationState, setCalibrationState] = useState({ calibrated: false, data: null, timestamp: null });
+  const [drawState, setDrawState] = useState({ draw: false, timestamp: null });
   const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
 
   // Always-fresh data for the selected session — derived by looking up sessions[] by ID
@@ -29,7 +29,6 @@ export function IMUProvider({ children }) {
 
   const updateSensor = useCallback((newSensor) => {
     setSensorData((s) => [...s.slice(-999), newSensor]);
-    
   }, []);
 
   const enableMouse = useCallback(() => setMouseEnabled(true), []);
@@ -141,11 +140,13 @@ export function IMUProvider({ children }) {
         });
       }
     });
-    socket.current.on('mouse-pos', (pos) => setMousePos(pos));
-    socket.current.on('sensor-calibration', (calibrationData) => {
-      setCalibrationState(calibrationData);
+
+    socket.current.on('sensor-draw', ({ draw, timestamp }) => {
+      setDrawState({ draw: draw === 'start', timestamp });
+      console.log('✍🏻 draw', draw, timestamp);
     });
-    socket.current.on('sensor-clear', () => setClear(true));
+
+    socket.current.on('mouse-pos', (pos) => setMousePos(pos));
 
     return () => {
       socket.current.disconnect();
