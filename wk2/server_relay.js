@@ -234,7 +234,7 @@ lerpIo = io; // give lerp loop access to io
 // ===============================
 const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://public.cloud.shiftr.io:1883";
 const MQTT_TOPIC = "kezia/imu/";
-const MQTT_SUBTOPIC = { DATA: "data", CONTROL: "control" };
+const MQTT_SUBTOPIC = { DATA: "data", CONTROL: "control", POWER: "power" };
 
 const mqttClient = mqtt.connect(MQTT_BROKER, {
   username: process.env.MQTT_USER || "public",
@@ -310,24 +310,28 @@ mqttClient.on("connect", () => {
       }
     }
 
+    // --- POWER ---
+    if (topic.includes(MQTT_SUBTOPIC.POWER)) {
+      let parsed;
+      try { parsed = JSON.parse(message.toString()); }
+      catch (err) { console.error("MQTT power parse error:", err.message); return; }
+
+      if (parsed.power !== undefined) {
+        const wasEnabled = mouseEnabled;
+        mouseEnabled = parsed.power === true;
+        console.log(`🖱 Power: ${mouseEnabled ? "ON" : "OFF"}`);
+        if (!wasEnabled && mouseEnabled) startNewSession();
+        else if (wasEnabled && !mouseEnabled) endSession();
+      }
+    }
+
     // --- CONTROL ---
-    // power - last will will be false (when device is off)
     // draw: "start" | "stop"
     // click: true (one-time)
     if (topic.includes(MQTT_SUBTOPIC.CONTROL)) {
       let parsed;
       try { parsed = JSON.parse(message.toString()); }
       catch (err) { console.error("MQTT control parse error:", err.message); return; }
-
-      if (parsed.power !== undefined) {
-        const wasEnabled = mouseEnabled;
-        mouseEnabled = parsed.power === true;
-        // io.emit("sensor-power", { power: mouseEnabled, timestamp: Date.now() });
-        console.log(`🖱 Power: ${mouseEnabled ? "ON" : "OFF"}`);
-
-        if (!wasEnabled && mouseEnabled) startNewSession();
-        else if (wasEnabled && !mouseEnabled) endSession();
-      }
 
       if (parsed.draw !== undefined) {
         io.emit("sensor-draw", { draw: parsed.draw, timestamp: Date.now() });

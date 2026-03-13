@@ -7,397 +7,421 @@
 #include <ArduinoMqttClient.h>
 #include <Wire.h>
 #include "arduino_secrets.h"
+#include <DFRobotDFPlayerMini.h>
+#include <SoftwareSerial.h>
 
-// ================= BUTTONS =================
-int calibrateButtonPin = 12;
-int resetButtonPin = 11;
+SoftwareSerial dfSerial(10, 11); // RX, TX for DFPlayer Mini
+DFRobotDFPlayerMini dfplayer;
+bool dfplayerAvailable = false;
 
-int calibrateLedPin = 8;  // serbaguna: power, calibration
-int powerLedPin = 6;
+unsigned long debounceDelay = 50;
 
-const unsigned long longPressTime = 1000;
-const unsigned long shortPressTime = 50;  // 10-110 ms
-
-
-// ================= POWER =================
-unsigned long resetPressStart = 0;
-bool resetPressed = false;
-bool isOn = false;
-
-// ================= CALIBRATION =================
-unsigned long calPressStart = 0;
-bool calPressed = false;
-bool calibrationMode = false;
-bool isCalibrated = false;
-bool isCalibratedTopLeft = false;
-bool isCalibratedBottomRight = false;
-float calibratedTopLeftRoll, calibratedTopLeftPitch, calibratedTopLeftHeading, calibratedBottomRightRoll, calibratedBottomRightPitch, calibratedBottomRightHeading;  // gyro values
-
-// ================ CONTROL
-bool ctrlPower = false;
-bool ctrlClick = false;
-bool ctrlClear = false;
-
-// ================= WIFI + MQTT =================
+// ================= WIFI =================
 WiFiClient wifi;
 MqttClient mqttClient(wifi);
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000);
 
+// ================= MQTT =================
 char broker[] = "public.cloud.shiftr.io";
 int port = 1883;
 char topic[] = "kezia/imu/data";
-
 String clientID = "keziaIMU_";
 const String deviceName = "kezia";
 
 // ================= TIMING =================
 const int sendInterval = 200;
-unsigned long lastSend = 0;
+unsigned long lastMqttSend = 0;
 
-// ================= IMU =================
-float ax, ay, az, gx, gy, gz;
-
+// ================= IMU + Mag Sensor =================
+float ax, ay, az, gx, gy, gz, pitch, roll, heading;
 Adafruit_LSM303_Mag_Unified mag(12345);
+int sensitivity; // defined by A3
 
+// LED indicators on star
+int starLedPins[] = {2, 3, 4, 5, 6};
+const int starLedCount = 5;
+// DRAW START/STOP
+const int drawBtnPin = 11;
+int drawState = LOW; // also acts as drawState | LOW = stop, HIGH = start
+int drawBtnState = HIGH;
+int lastDrawBtnState = HIGH;
+unsigned long lastDrawBtnDebounce = 0;
+//
+// CLICK
+const int clickBtnPin = 12;
+int clickState = LOW;
+int clickBtnState = HIGH;
+int lastClickBtnState = HIGH;
+unsigned long lastClickBtnDebounce = 0;
+int mqttClick = false; // state for mqtt toggle purpose
+//
 
-// =================================================
-
-void setup() {
+void setup()
+{
   Serial.begin(115200);
+  while (!Serial); // just add this
 
-  pinMode(calibrateButtonPin, INPUT_PULLUP);  // yellow
-  pinMode(resetButtonPin, INPUT_PULLUP);      // red
+  // LED Initialization
+  pinMode(clickBtnPin, INPUT_PULLUP);
+  pinMode(drawBtnPin, INPUT_PULLUP);
 
-  pinMode(calibrateLedPin, OUTPUT);  // red
-  pinMode(powerLedPin, OUTPUT);      // white
+  for (int i = 0; i < starLedCount; i++)
+    pinMode(starLedPins[i], OUTPUT);
 
+  // WiFi Network
   connectToNetwork();
-
-  IMU.begin();
-  mag.begin();
-  mag.enableAutoRange(true);
-
-  timeClient.begin();
-
   byte mac[6];
   WiFi.macAddress(mac);
   for (int i = 0; i < 3; i++)
     clientID += String(mac[i], HEX);
 
+  // MQTT
   mqttClient.setId(clientID);
   mqttClient.setUsernamePassword(
-    SECRET_MQTT_USER,
-    SECRET_MQTT_PASS);
+      SECRET_MQTT_USER,
+      SECRET_MQTT_PASS);
+  mqttClient.setKeepAliveInterval(1500); // send last will after 1.5s of being disconnected
+
+  // IMU + Mag
+  IMU.begin();
+  mag.begin();
+  mag.enableAutoRange(true);
+  timeClient.begin();
+
+  dfSerial.begin(9600);
+  if (dfplayer.begin(dfSerial))
+  {
+    dfplayerAvailable = true;
+    dfplayer.volume(20); // Set volume (0-30)
+    Serial.println("DFPlayer Mini detected.");
+  }
+  else
+  {
+    dfplayerAvailable = false;
+    Serial.println("DFPlayer Mini not detected, using buzzer.");
+  }
 }
 
-// =================================================
+void loop()
+{
 
-void loop() {
-
+  // Connect to WiFi + MQTT
   mqttClient.poll();
   unsigned long now = millis();
 
-// ---- WIFI CHECK ----
-if (WiFi.status() != WL_CONNECTED) {
-  Serial.println("WiFi lost. Reconnecting...");
-  WiFi.disconnect();
-  delay(1000);
-  WiFi.begin(SECRET_SSID, SECRET_PASS);
-  delay(5000);
-  return;  // stop loop this cycle
-}
+  if (!mqttClient.connected())
+    connectToBroker();
 
-  if (!mqttClient.connected()) {
-  Serial.println("Attempting MQTT connection...");
-  if (mqttClient.connect(broker, port)) {
-    Serial.println("MQTT reconnected");
-  } else {
-    Serial.print("Failed, rc=");
-    Serial.println(mqttClient.connectError());
-    delay(2000);
-  }
-}
-    
-  // IMU
-  if (IMU.accelerationAvailable())
-    IMU.readAcceleration(ax, ay, az);
+  // ====== DRAW START/STOP ============
+  int drawBtnReading = digitalRead(drawBtnPin);
 
-  if (IMU.gyroscopeAvailable())
-    IMU.readGyroscope(gx, gy, gz);
-
-  sensors_event_t event;
-  mag.getEvent(&event);
-
-  float roll = atan2(ay, az) * 180.0 / PI;
-  float pitch = atan(-ax / sqrt(ay * ay + az * az)) * 180.0 / PI;
-  float heading = atan2(event.magnetic.y, event.magnetic.x) * 180.0 / PI;
-  // Convert -180 → 180 into 0 → 360
-  if (heading < 0) {
-    heading += 360.0;
+  if (drawBtnReading != lastDrawBtnState)
+  {
+    lastDrawBtnDebounce = millis();
   }
 
-  // =================================================
-  // =============== POWER BUTTON ====================
-  // =================================================
+  if ((millis() - lastDrawBtnDebounce) > debounceDelay)
+  {
 
-  bool currentReset = digitalRead(resetButtonPin);
+    if (drawBtnReading != drawBtnState)
+    {
 
-  // press start
-  if (currentReset == LOW && !resetPressed) {
-    resetPressed = true;
-    resetPressStart = millis();
-  }
+      drawBtnState = drawBtnReading;
 
-  // release
-  if (currentReset == HIGH && resetPressed) {
-
-    unsigned long duration = millis() - resetPressStart;
-
-    if (duration >= longPressTime) {
-
-      isOn = !isOn;
-
-      if (isOn) {
-        Serial.println("SYSTEM ON");
-        digitalWrite(powerLedPin, HIGH);
-        setPower(true);
-      } else {
-        Serial.println("SYSTEM OFF");
-        digitalWrite(powerLedPin, LOW);
-        digitalWrite(calibrateLedPin, LOW);
-
-        // reset calibration value to null
-        isCalibrated = false;
-        isCalibratedTopLeft = false;
-        isCalibratedBottomRight = false;
-        setPower(false);
+      if (drawBtnState == LOW)
+      { // pressed
+        drawState = !drawState;
+        animateStarLEDs();
       }
-    } else if (duration >= shortPressTime) {
-      Serial.println("[CLICK]");
-      digitalWrite(powerLedPin, LOW);
-      delay(50);
-      digitalWrite(powerLedPin, HIGH);
-      delay(50);
-      pulseClick();
+
+      // perform mqtt draw
+      pulseDraw();
+      // play sound
+      makeDrawSound();
+    }
+  }
+
+  for (int i = 0; i < starLedCount; i++)
+    digitalWrite(starLedPins[i], drawState);
+
+  lastDrawBtnState = drawBtnReading;
+
+  // ================================
+  // ============ CLICK =============
+  // only performs 'click' if the drawState is HIGH / 'start'
+  if (drawState)
+  {
+    int clickBtnReading = digitalRead(clickBtnPin);
+
+    if (clickBtnReading != lastClickBtnState)
+    {
+      lastClickBtnDebounce = millis();
     }
 
-    resetPressed = false;
-  }
+    if ((millis() - lastClickBtnDebounce) > debounceDelay)
+    {
 
-  // If system is OFF, stop here
-  if (!isOn) return;
-
-  // =================================================
-  // ============= CALIBRATE BUTTON ==================
-  // =================================================
-
-  bool currentCal = digitalRead(calibrateButtonPin);
-
-  // press start
-  if (currentCal == LOW && !calPressed) {
-    calPressed = true;
-    calPressStart = millis();
-  }
-
-  // release
-  if (currentCal == HIGH && calPressed) {
-
-    unsigned long duration = millis() - calPressStart;
-
-    if (duration >= longPressTime) {
-      calibrationMode = true;
-      Serial.println("[START CALIBRATING]");
-      digitalWrite(calibrateLedPin, HIGH);
-      isCalibrated = false;
-      isCalibratedTopLeft = false;
-      isCalibratedBottomRight = false;
-    } else if (duration >= shortPressTime) {
-
-      if (calibrationMode) {
-
-        digitalWrite(calibrateLedPin, LOW);
-        delay(50);
-        digitalWrite(calibrateLedPin, HIGH);
-        delay(50);
-
-        if (!isCalibratedTopLeft) {
-          calibratedTopLeftRoll = roll;
-          calibratedTopLeftPitch = pitch;
-          calibratedTopLeftHeading = heading;
-          isCalibratedTopLeft = true;
-        } else if (!isCalibratedBottomRight) {
-          calibratedBottomRightRoll = roll;
-          calibratedBottomRightPitch = pitch;
-          calibratedBottomRightHeading = heading;
-          isCalibratedBottomRight = true;
+      if (clickBtnReading != clickBtnState)
+      { // click btn is clicked (track by state changes)
+        clickBtnState = clickBtnReading;
+        if (clickBtnState == LOW)
+        { // only trigger when state changes from HIGH -> LOW
+          blinkAllStars();
+          // performs mqtt click
+          pulseClick();
+          // plays sound
+          makeClickSound();
         }
-
-        if (isCalibratedTopLeft && isCalibratedBottomRight) {
-          isCalibrated = true;
-          calibrationMode = false;
-          digitalWrite(calibrateLedPin, LOW);  // turn off led after calibration done
-        }
-
-        publishCalibration(
-          calibratedTopLeftRoll,
-          calibratedTopLeftPitch,
-          calibratedTopLeftHeading,
-          calibratedBottomRightRoll,
-          calibratedBottomRightPitch,
-          calibratedBottomRightHeading);
       }
     }
-
-    calPressed = false;
+    lastClickBtnState = clickBtnReading;
   }
 
-  // =================================================
+  // ======= NON-INTERACTIONAL LED STATES ============
+  // takes from the drawing state: start/stop
+  for (int i = 0; i < starLedCount; i++)
+    digitalWrite(starLedPins[i], drawState);
+  // ====================================
+
+  if (!drawState)
+    return; // do not read and send mqtt sensor msg if drawState is LOW / 'stop'
+
   // ================= SENSOR UPDATE =================
-  // =================================================
+  // sends every x sendInterval
+  if (now - lastMqttSend >= sendInterval)
+  {
 
-  if (now - lastSend >= sendInterval) {
+    lastMqttSend = now;
 
-    lastSend = now;
+    // ---------- READ ACCEL ----------
+    if (IMU.accelerationAvailable())
+      IMU.readAcceleration(ax, ay, az);
 
-    // =================================================
-    // ================= MQTT SEND =====================
-    // =================================================
+    // ---------- GYRO ----------
+    if (IMU.gyroscopeAvailable())
+      IMU.readGyroscope(gx, gy, gz);
 
-    if (mqttClient.connected() && isCalibrated) {
+    // ---------- SENSITIVITY ----------
+    int sensitivityReading = analogRead(A3);
+    sensitivity = floor(map(sensitivityReading, 0, 1023, 1, 10));
 
-      mqttClient.beginMessage(topic);
+    // // ---------- NORMALIZATION ----------
+    // sensors_event_t event;
+    // mag.getEvent(&event);
 
-      mqttClient.print("{\"device\":\"");
-      mqttClient.print(deviceName);
-      mqttClient.print("\",\"sensor\":{");
+    // roll = atan2(ay, az) * 180.0 / PI;
+    // pitch = atan(-ax / sqrt(ay * ay + az * az)) * 180.0 / PI;
+    // heading = atan2(event.magnetic.y, event.magnetic.x) * 180.0 / PI;
+    // // Convert -180 → 180 into 0 → 360
+    // if (heading < 0) {
+    //   heading += 360.0;
+    // }
 
-      mqttClient.print("\"ax\":");
-      mqttClient.print(ax);
-      mqttClient.print(",");
-      mqttClient.print("\"ay\":");
-      mqttClient.print(ay);
-      mqttClient.print(",");
-      mqttClient.print("\"az\":");
-      mqttClient.print(az);
-      mqttClient.print(",");
+    // ================= MQTT =================
 
-      mqttClient.print("\"gx\":");
-      mqttClient.print(gx);
-      mqttClient.print(",");
-      mqttClient.print("\"gy\":");
-      mqttClient.print(gy);
-      mqttClient.print(",");
-      mqttClient.print("\"gz\":");
-      mqttClient.print(gz);
-      mqttClient.print(",");
-
-      mqttClient.print("\"pitch\":");
-      mqttClient.print(pitch);
-      mqttClient.print(",");
-      mqttClient.print("\"roll\":");
-      mqttClient.print(roll);
-      mqttClient.print(",");
-      mqttClient.print("\"heading\":");
-      mqttClient.print(heading);
-      mqttClient.print(",");
-
-      mqttClient.print("\"timestamp\":");
-      mqttClient.print(timeClient.getEpochTime());
-      mqttClient.print("}}");
-
-      mqttClient.endMessage();
+    if (mqttClient.connected())
+    { // todo: stop sending when drawState 'stop'
+      publishMqtt();
     }
   }
 }
 
 // =================================================
+// LED ANIMATION
+// =================================================
 
-void connectToNetwork() {
-  while (WiFi.status() != WL_CONNECTED) {
-    WiFi.begin(SECRET_SSID, SECRET_PASS);
-    delay(4000);
+void animateStarLEDs()
+{
+
+  for (int i = 0; i < starLedCount; i++)
+  {
+    digitalWrite(starLedPins[i], HIGH);
+    delay(80);
+    digitalWrite(starLedPins[i], LOW);
+  }
+
+  for (int i = starLedCount - 2; i > 0; i--)
+  {
+    digitalWrite(starLedPins[i], HIGH);
+    delay(80);
+    digitalWrite(starLedPins[i], LOW);
   }
 }
 
-boolean connectToBroker() {
-  return mqttClient.connect(broker, port);
+void blinkAllStars()
+{
+
+  for (int j = 0; j < 3; j++)
+  {
+
+    for (int i = 0; i < starLedCount; i++)
+      digitalWrite(starLedPins[i], HIGH);
+
+    delay(80);
+
+    for (int i = 0; i < starLedCount; i++)
+      digitalWrite(starLedPins[i], LOW);
+
+    delay(80);
+  }
+}
+// ========================================
+
+// ============== NETWORK =================
+void connectToNetwork()
+{
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("Connecting to WiFi...");
+    WiFi.begin(SECRET_SSID, SECRET_PASS);
+    delay(1000);
+  }
+}
+// ========================================
+
+// ============== MQTT =================
+boolean connectToBroker()
+{
+  Serial.println("Connecting to broker...");
+
+  // last will must be set BEFORE connect()
+  mqttClient.beginWill("kezia/imu/power", true, 0);
+  mqttClient.print("{\"power\": false}");
+  mqttClient.endWill();
+
+  if (!mqttClient.connect(broker, port))
+  {
+    Serial.print("MQTT connection failed! Error: ");
+    Serial.println(mqttClient.connectError());
+    return false;
+  }
+
+  Serial.println("Broker connected.");
+  publishPower(true); // Only send power ON once after connect
+  publishControl();   // Optionally send initial control state
+  return true;
+}
+// ========================================
+
+// ============== Sound Util Fn =================
+void makeClickSound()
+{
+  if (dfplayerAvailable)
+  {
+    dfplayer.play(2); // Play 0002.mp3 for click
+  }
 }
 
-// MQTT Configs
-void pulseClick() {
-  ctrlClick = true;
+void makeDrawSound()
+{
+  if (dfplayerAvailable)
+  {
+    if (drawState)
+      dfplayer.play(1); // Play 0001.mp3 for draw start
+    else
+      dfplayer.play(3); // Play 0003.mp3 for draw stop (optional)
+  }
+}
+
+// ============== MQTT Util Fn =================
+void pulseClick()
+{
+  mqttClick = true;
   publishControl();
-  ctrlClick = false;  // toggle back to false
+  // delay(50);
+  mqttClick = false;
+  publishControl();
+  Serial.println("CLICK!");
+}
+
+void pulseDraw()
+{
+  Serial.println(drawState ? "START" : "STOP");
   publishControl();
 }
 
-void pulseClear() {
-  ctrlClear = true;
-  publishControl();
-  ctrlClear = false;  // toggle back to false
-  publishControl();
-}
-
-void setPower(bool state) {
-  ctrlPower = state;
-  publishControl();
-}
-
-void publishCalibration(float roll0, float pitch0, float heading0, float roll1, float pitch1, float heading1) {
-  if (!mqttClient.connected()) return;
-
-  mqttClient.beginMessage("kezia/imu/calibration");
-
-  mqttClient.print("{");
-
-  mqttClient.print("\"calibrated\":");
-  mqttClient.print(isCalibrated ? "true" : "false");
-  mqttClient.print(",");
-
-  mqttClient.print("\"topLeftRoll\":");
-  mqttClient.print(roll0, 4);
-  mqttClient.print(",");
-
-  mqttClient.print("\"topLeftPitch\":");
-  mqttClient.print(pitch0, 4);
-  mqttClient.print(",");
-
-  mqttClient.print("\"topLeftHeading\":");
-  mqttClient.print(heading0, 4);
-  mqttClient.print(",");
-
-  mqttClient.print("\"bottomRightRoll\":");
-  mqttClient.print(roll1, 4);
-  mqttClient.print(",");
-
-  mqttClient.print("\"bottomRightPitch\":");
-  mqttClient.print(pitch1, 4);
-  mqttClient.print(",");
-
-  mqttClient.print("\"bottomRightHeading\":");
-  mqttClient.print(heading0, 4);
-
-  mqttClient.print("}");
-
-  mqttClient.endMessage();
-}
-
-void publishControl() {
-
-  if (!mqttClient.connected()) return;
-
+void publishControl()
+{
+  if (!mqttClient.connected())
+    return;
   mqttClient.beginMessage("kezia/imu/control");
-
-  mqttClient.print("{\"power\":");
-  mqttClient.print(ctrlPower ? "true" : "false");
-  mqttClient.print(",\"click\":");
-  mqttClient.print(ctrlClick ? "true" : "false");
-  mqttClient.print(",\"clear\":");
-  mqttClient.print(ctrlClear ? "true" : "false");
+  mqttClient.print("{");
+  mqttClient.print("\"click\":");
+  mqttClient.print(mqttClick ? "true" : "false");
+  mqttClient.print(",\"draw\":");
+  mqttClient.print(drawState ? "\"start\"" : "\"stop\"");
   mqttClient.print("}");
+  mqttClient.endMessage();
+}
+
+void publishPower(bool on)
+{
+  if (!mqttClient.connected())
+    return;
+  mqttClient.beginMessage("kezia/imu/power");
+  mqttClient.print("{");
+  mqttClient.print("\"power\":");
+  mqttClient.print(on ? "true" : "false");
+  mqttClient.print("}");
+  mqttClient.endMessage();
+}
+
+void publishMqtt()
+{
+  mqttClient.beginMessage(topic);
+
+  mqttClient.print("{\"device\":\"");
+  mqttClient.print(deviceName);
+  mqttClient.print("\",\"sensor\":{");
+
+  mqttClient.print("\"ax\":");
+  mqttClient.print(ax);
+  mqttClient.print(",");
+  mqttClient.print("\"ay\":");
+  mqttClient.print(ay);
+  mqttClient.print(",");
+  mqttClient.print("\"az\":");
+  mqttClient.print(az);
+  mqttClient.print(",");
+
+  mqttClient.print("\"gx\":");
+  mqttClient.print(gx);
+  mqttClient.print(",");
+  mqttClient.print("\"gy\":");
+  mqttClient.print(gy);
+  mqttClient.print(",");
+  mqttClient.print("\"gz\":");
+  mqttClient.print(gz);
+  mqttClient.print(",");
+
+  mqttClient.print("\"pitch\":");
+  mqttClient.print(pitch);
+  mqttClient.print(",");
+
+  mqttClient.print("\"roll\":");
+  mqttClient.print(roll);
+  mqttClient.print(",");
+
+  mqttClient.print("\"heading\":");
+  mqttClient.print(heading);
+  mqttClient.print(",");
+
+  mqttClient.print("\"sensitivity\":");
+  mqttClient.print(sensitivity);
+  mqttClient.print(",");
+
+  mqttClient.print("\"timestamp\":"); // ms
+  unsigned long long tsMs =
+      (unsigned long long)timeClient.getEpochTime() * 1000ULL +
+      (millis() % 1000);
+
+  mqttClient.print((unsigned long long)tsMs);
+  mqttClient.print("}}");
 
   mqttClient.endMessage();
-
-  // delay(10);
 }
+
+// NOTE
+// There are some delays that may cause side effect
+// Open for improvement
