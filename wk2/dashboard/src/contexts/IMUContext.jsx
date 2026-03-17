@@ -18,6 +18,27 @@ export function IMUProvider({ children }) {
   const [clear, setClear] = useState(false);
   const [drawState, setDrawState] = useState({ draw: false, timestamp: null });
   const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
+  const [click, setClick] = useState(false); // click state for animation
+
+  // Optional click tone to debug
+  const playClickTone = useCallback(() => {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(1000, ctx.currentTime); // pitch
+
+    gain.gain.setValueAtTime(0.2, ctx.currentTime); // volume
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.1);
+  }, []);
 
   // Always-fresh data for the selected session — derived by looking up sessions[] by ID
   // (selectedSession itself is a stale snapshot; sessions[] is the live source of truth)
@@ -33,7 +54,7 @@ export function IMUProvider({ children }) {
 
   const enableMouse = useCallback(() => setMouseEnabled(true), []);
   const disableMouse = useCallback(() => setMouseEnabled(false), []);
-  
+
   const socket = useRef(null);
 
   useEffect(() => {
@@ -57,21 +78,21 @@ export function IMUProvider({ children }) {
       // Backward compatibility: convert old object format to array
       if (!Array.isArray(incomingSessions) && typeof incomingSessions === 'object') {
         console.log('⚠️ Converting old session format to array');
-        processedIncomingSessions = Object.entries(incomingSessions).map(([id, session]) => ({  id, ...session }));
+        processedIncomingSessions = Object.entries(incomingSessions).map(([id, session]) => ({ id, ...session }));
       }
-      
+
       // Ensure each session's data is an array (Firebase stores as object with numeric keys)
       processedIncomingSessions = processedIncomingSessions.map(session => ({
         ...session,
-        data: session.data && typeof session.data === 'object' && !Array.isArray(session.data) 
-          ? Object.values(session.data) 
+        data: session.data && typeof session.data === 'object' && !Array.isArray(session.data)
+          ? Object.values(session.data)
           : (Array.isArray(session.data) ? session.data : [])
       }));
-      
+
       console.log('📦 Loaded sessions:', processedIncomingSessions.length);
 
       setSessions(processedIncomingSessions);
-      
+
       // Seed live sensorData from the most recent session's data
       const last = processedIncomingSessions[processedIncomingSessions.length - 1];
       setSensorData(last?.data ?? []);
@@ -79,6 +100,7 @@ export function IMUProvider({ children }) {
       if (last) setSelectedSession(last);
     });
     socket.current.on('sensor-realtime-receive', (entry) => {
+      // Only update if drawState.draw is true
       setSensorData((prev) => [...prev, entry].slice(-1000));
       // Append to the last session in sessions[]
       setSessions((prev) => {
@@ -116,15 +138,15 @@ export function IMUProvider({ children }) {
       try {
         const response = await fetch(`${REACT_APP_SERVER_URL}/sensor-data`);
         const freshSessions = await response.json();
-        
+
         // Convert data to arrays if needed
         const processedSessions = freshSessions.map(session => ({
           ...session,
-          data: session.data && typeof session.data === 'object' && !Array.isArray(session.data) 
-            ? Object.values(session.data) 
+          data: session.data && typeof session.data === 'object' && !Array.isArray(session.data)
+            ? Object.values(session.data)
             : (Array.isArray(session.data) ? session.data : [])
         }));
-        
+
         setSessions(processedSessions);
         setSessionsUpdated(Date.now()); // Trigger update notification
         console.log('✅ Sessions refreshed after session end');
@@ -141,12 +163,43 @@ export function IMUProvider({ children }) {
       }
     });
 
-    socket.current.on('sensor-draw', ({ draw, timestamp }) => {
-      setDrawState({ draw: draw === 'start', timestamp });
-      console.log('✍🏻 draw', draw, timestamp);
+    socket.current.on('sensor-draw', (data) => {
+      setDrawState(prev => ({ ...prev, draw: data.draw === 'start', timestamp: data.timestamp }));
+      console.log('✍🏻 draw', data.draw, data.timestamp);
     });
 
-    socket.current.on('mouse-pos', (pos) => setMousePos(pos));
+    socket.current.on('sensor-processed-mouse-pos', (pos) => {
+      setMousePos(pos);
+    });
+
+    socket.current.on('sensor-click', () => {
+      // 1. update state (for animations)
+      setClick(true);
+      setTimeout(() => setClick(false), 100);
+      console.log('click!');
+
+      // 2. play tone
+      playClickTone();
+
+      // 3. trigger browser click at last known mouse position
+      // TODO
+      if (mousePos) {
+        const el = document.elementFromPoint(mousePos.x, mousePos.y);
+        if (el) {
+          el.dispatchEvent(
+            new MouseEvent('click', {
+              bubbles: true,
+              cancelable: true,
+              clientX: mousePos.x,
+              clientY: mousePos.y,
+            })
+          );
+        }
+      }
+
+      // Optional: also emit a global custom event
+      window.dispatchEvent(new Event('imu-click'));
+    });
 
     return () => {
       socket.current.disconnect();
@@ -176,6 +229,7 @@ export function IMUProvider({ children }) {
     setSelectedSession,
     selectedSessionData, // live data for the selected session (always fresh)
     sessionsUpdated, // timestamp for animation/update detection
+    drawState, // <-- add drawState to context value
   };
 
   return <IMUContext.Provider value={value}>{children}</IMUContext.Provider>;

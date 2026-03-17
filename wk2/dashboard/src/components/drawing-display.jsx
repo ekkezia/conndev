@@ -14,11 +14,13 @@ export default function DrawingDisplay({ className }) {
   const playbackLayerRef = useRef(null);
 
   // ----- REALTIME STATE -----
-  const realtimePosRef = useRef(null);
-  const realtimePrevRef = useRef(null);
-  const realtimeLerpRef = useRef(null);      // { x, y } current lerp position
-  const realtimeAnimRef = useRef(null);      // animation frame ID
-  const realtimeTargetRef = useRef(null);    // { x, y, mag } target to lerp toward
+  const realtimePosRef = useRef(null);        // (kept for drawSmoothedLine compat)
+  const realtimePrevRef = useRef(null);       // (kept for drawSmoothedLine compat)
+  const realtimeLerpRef = useRef(null);       // { x, y, mag } smoothed cursor position
+  const realtimeLastDrawnRef = useRef(null);  // { x, y } last position a stroke segment was drawn from
+  const realtimeAnimRef = useRef(null);       // persistent rAF loop ID
+  const realtimeTargetRef = useRef(null);     // { x, y, mag } latest raw sensor target
+  const drawStateRef = useRef(null);          // mirror of drawState for rAF closure
 
   // ----- PLAYBACK STATE -----
   const playbackPosRef = useRef(null);
@@ -27,12 +29,12 @@ export default function DrawingDisplay({ className }) {
   const animFrameRef = useRef(null);    // in-flight requestAnimationFrame id
   const lerpPosRef = useRef(null);      // { x, y } lerp cursor, survives between effect calls
 
-  const { sensorData, playbackMode, playbackStatus, enableHelper, mousePos, clear, setClear, selectedSession, selectedSessionData } = useIMU();
+  const { sensorData, playbackMode, playbackStatus, enableHelper, mousePos, clear, setClear, selectedSession, selectedSessionData, drawState } = useIMU();
   // Always-fresh data for the selected session (derived live in IMUContext)
   const playbackData = selectedSessionData;
   const mouseDotRef = useRef(null);
-  const mousePathRef = useRef(null); // persistent paper.Path for no the mouse trail
-  const [drawState, setDrawState] = useState(true); // todo: change later
+  const mousePathRef = useRef(null); // persistent paper.Path for the mouse trail
+  // drawState is now provided by context
 
   // =================================================
   // SETUP PAPER + GRID + CARTESIAN AXES
@@ -80,7 +82,7 @@ export default function DrawingDisplay({ className }) {
         from: [x, 0],
         to: [x, height],
         strokeColor: new paper.Color(1, 1, 1, 0.15),
-        strokeWidth: 1,
+        strokeWidth: 0.5,
       });
     }
 
@@ -89,30 +91,23 @@ export default function DrawingDisplay({ className }) {
         from: [0, y],
         to: [width, y],
         strokeColor: new paper.Color(1, 1, 1, 0.15),
-        strokeWidth: 1,
+        strokeWidth: 0.5,
       });
     }
 
-    // =========================
-    // DRAW AXES
-    // =========================
+    // Axes
     new paper.Path.Line({
       from: [0, center.y],
       to: [width, center.y],
-      strokeColor: "red",
-      strokeWidth: 2,
+      strokeColor: new paper.Color(1, 1, 1, 0.6),
+      strokeWidth: 1,
     });
-
     new paper.Path.Line({
       from: [center.x, 0],
       to: [center.x, height],
-      strokeColor: "green",
-      strokeWidth: 2,
+      strokeColor: new paper.Color(1, 1, 1, 0.6),
+      strokeWidth: 1,
     });
-
-    // =========================
-    // NUMBERING
-    // =========================
 
     // X positive →
     let xIndex = 0;
@@ -212,12 +207,24 @@ export default function DrawingDisplay({ className }) {
       realtimeAnimRef.current = null;
     }
 
-    realtimeLayerRef.current.removeChildren();
+    // Remove all children except the mouse dot
+    if (realtimeLayerRef.current && mouseDotRef.current) {
+      const children = realtimeLayerRef.current.children.slice();
+      for (const child of children) {
+        if (child !== mouseDotRef.current) {
+          child.remove();
+        }
+      }
+    } else if (realtimeLayerRef.current) {
+      realtimeLayerRef.current.removeChildren();
+    }
     realtimePosRef.current = null;
     realtimePrevRef.current = null;
     realtimeLerpRef.current = null;
     realtimeTargetRef.current = null;
-    mouseDotRef.current = null;
+    realtimeLastDrawnRef.current = null;
+    drawStateRef.current = null;
+    // Do not clear mouseDotRef.current so the dot persists
     paper.view.draw();
 
     const timer = setTimeout(() => setClear(false), 300);
@@ -289,9 +296,61 @@ export default function DrawingDisplay({ className }) {
     paper.view.draw();
   }
 
+  // --- RED DOT (MOUSE CURSOR) ---
+  useEffect(() => {
+    if (!realtimeLayerRef.current || !sensorData || sensorData.length === 0) return;
+
+    // Use the latest sensor data for mouse position, just like playback
+    const s = sensorData[sensorData.length - 1];
+    if (!s?.sensor || !s?.screenSize) return;
+    const { mouseTargetX, mouseTargetY } = s.sensor;
+    const { width: screenW, height: screenH } = s.screenSize;
+    if (mouseTargetX == null || mouseTargetY == null || !screenW || !screenH) return;
+
+    const canvasWidth = paper.view.size.width;
+    const canvasHeight = paper.view.size.height;
+    const canvasX = Math.max(0, Math.min((mouseTargetX / screenW) * canvasWidth, canvasWidth));
+    const canvasY = Math.max(0, Math.min((mouseTargetY / screenH) * canvasHeight, canvasHeight));
+
+    // Color logic
+    let color = {
+      path: new paper.Color(1, 0, 1, 0.8), // fuchsia
+      unCalibratedMouse: new paper.Color(1, 0, 0, 0.8), // red
+      calibratedMouse: new paper.Color(1, 1, 0, 0.9), // yellow
+    };
+    let currentMouseColor = color.unCalibratedMouse;
+    if (s.calibrated) {
+      currentMouseColor = color.calibratedMouse;
+    }
+
+    realtimeLayerRef.current.activate();
+    const pt = new paper.Point(canvasX, canvasY);
+
+    // Always update or create the red cursor dot (always on top)
+    if (!mouseDotRef.current) {
+      mouseDotRef.current = new paper.Path.Circle({
+        center: pt,
+        radius: 6,
+        fillColor: currentMouseColor,
+        strokeColor: new paper.Color(1, 1, 1, 0.6),
+        strokeWidth: 1.5,
+      });
+    } else {
+      mouseDotRef.current.position = pt;
+      mouseDotRef.current.fillColor = currentMouseColor;
+    }
+    mouseDotRef.current.bringToFront();
+    paper.view.draw();
+  }, [sensorData]);
+
   // =================================================
-  // REALTIME MODE — maps screen coords to canvas and draws with smooth animation
+  // REALTIME MODE — keep drawStateRef current so the rAF loop can read it
   // =================================================
+  useEffect(() => {
+    drawStateRef.current = drawState;
+  }, [drawState]);
+
+  // Update target whenever new sensor data arrives
   useEffect(() => {
     if (playbackMode || !sensorData || !realtimeLayerRef.current) return;
 
@@ -307,154 +366,83 @@ export default function DrawingDisplay({ className }) {
     const canvasX = (mouseTargetX / screenW) * canvasW;
     const canvasY = (mouseTargetY / screenH) * canvasH;
 
-    // Initialize refs on first point
-    if (!realtimePosRef.current) {
-      realtimePosRef.current = new paper.Point(canvasX, canvasY);
+    // Seed lerp position on very first data point
+    if (!realtimeLerpRef.current) {
+      realtimeLerpRef.current = { x: canvasX, y: canvasY, mag: mag ?? 1 };
+      realtimeLastDrawnRef.current = { x: canvasX, y: canvasY };
       realtimePrevRef.current = new paper.Point(canvasX, canvasY);
-      realtimePrevRef.current.mag = mag; // store initial magnitude
-      realtimeLerpRef.current = { x: canvasX, y: canvasY };
+      realtimePrevRef.current.mag = mag ?? 1;
+      realtimePosRef.current = new paper.Point(canvasX, canvasY);
+    }
+
+    // Always update the target — the rAF loop will chase it
+    realtimeTargetRef.current = { x: canvasX, y: canvasY, mag: mag ?? 1 };
+  }, [sensorData, playbackMode]);
+
+  // Single persistent rAF loop — starts once, runs until playbackMode or unmount
+  useEffect(() => {
+    if (playbackMode) {
+      if (realtimeAnimRef.current) {
+        cancelAnimationFrame(realtimeAnimRef.current);
+        realtimeAnimRef.current = null;
+      }
       return;
     }
 
-    // Set new target and start animating toward it
-    realtimeTargetRef.current = { x: canvasX, y: canvasY, mag };
+    const LERP_FACTOR = 0.18;
 
-    if (realtimeAnimRef.current) return; // already animating
+    const loop = () => {
+      realtimeAnimRef.current = requestAnimationFrame(loop);
 
-    // Ensure lerp position is initialized before animating
-    if (!realtimeLerpRef.current) {
-      realtimeLerpRef.current = { x: canvasX, y: canvasY };
-      return; // will animate on next call
-    }
+      const target = realtimeTargetRef.current;
+      const lerp = realtimeLerpRef.current;
+      if (!target || !lerp || !realtimeLayerRef.current) return;
 
-    const LERP_DURATION = 50; // fast lerp for realtime responsiveness
-    const startTime = performance.now();
-    const startX = realtimeLerpRef.current.x;
-    const startY = realtimeLerpRef.current.y;
-    const prevMag = realtimePrevRef.current?.mag ?? 0; // get previous magnitude
+      // Exponential lerp toward target — runs every frame ~60fps
+      const lx = lerp.x + (target.x - lerp.x) * LERP_FACTOR;
+      const ly = lerp.y + (target.y - lerp.y) * LERP_FACTOR;
+      const lmag = (lerp.mag ?? 1) + ((target.mag ?? 1) - (lerp.mag ?? 1)) * LERP_FACTOR;
 
-    const animate = (now) => {
-      if (!realtimeLayerRef.current || !realtimeTargetRef.current) {
-        realtimeAnimRef.current = null;
+      // Write back lerp position
+      realtimeLerpRef.current = { x: lx, y: ly, mag: lmag };
+
+      // Only draw if moved enough and draw mode is on
+      if (!drawStateRef.current?.draw) return;
+      if (!realtimeLastDrawnRef.current) {
+        realtimeLastDrawnRef.current = { x: lx, y: ly };
         return;
       }
 
-      const target = realtimeTargetRef.current;
-      const elapsed = now - startTime;
-      const t = Math.min(elapsed / LERP_DURATION, 1);
-      
-      // Ease out for smoother motion
-      const ease = 1 - Math.pow(1 - t, 2);
+      const dx = lx - realtimeLastDrawnRef.current.x;
+      const dy = ly - realtimeLastDrawnRef.current.y;
+      if (Math.sqrt(dx * dx + dy * dy) < 0.5) return;
 
-      const x = startX + (target.x - startX) * ease;
-      const y = startY + (target.y - startY) * ease;
-      const mag = prevMag + (target.mag - prevMag) * ease; // Interpolate magnitude too
-
-      realtimeLerpRef.current = { x, y };
-
-      // Draw if we've moved enough
-      const dx = x - realtimePrevRef.current.x;
-      const dy = y - realtimePrevRef.current.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      
-      if (dist > 0.5) {
-        drawSmoothedLine(x, y, mag, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
+      // Ensure paper refs are ready for drawSmoothedLine
+      if (!realtimePrevRef.current) {
+        realtimePrevRef.current = new paper.Point(lx, ly);
+        realtimePrevRef.current.mag = lmag;
+        realtimePosRef.current = new paper.Point(lx, ly);
+        realtimeLastDrawnRef.current = { x: lx, y: ly };
+        return;
       }
 
-      if (t < 1) {
-        realtimeAnimRef.current = requestAnimationFrame(animate);
-      } else {
-        realtimeAnimRef.current = null;
-        // If there's a new target waiting, start new animation
-        if (realtimeTargetRef.current !== target) {
-          const newTarget = realtimeTargetRef.current;
-          const newStartTime = performance.now();
-          const newStartX = realtimeLerpRef.current.x;
-          const newStartY = realtimeLerpRef.current.y;
-          const newStartMag = realtimePrevRef.current?.mag ?? 0;
-          
-          const newAnimate = (now) => {
-            if (!realtimeLayerRef.current || !realtimeTargetRef.current) {
-              realtimeAnimRef.current = null;
-              return;
-            }
-            const t2 = Math.min((now - newStartTime) / LERP_DURATION, 1);
-            const ease2 = 1 - Math.pow(1 - t2, 2);
-            const x2 = newStartX + (newTarget.x - newStartX) * ease2;
-            const y2 = newStartY + (newTarget.y - newStartY) * ease2;
-            const mag2 = newStartMag + (newTarget.mag - newStartMag) * ease2; // Interpolate magnitude
-            realtimeLerpRef.current = { x: x2, y: y2 };
-            const dx2 = x2 - realtimePrevRef.current.x;
-            const dy2 = y2 - realtimePrevRef.current.y;
-            if (Math.sqrt(dx2 * dx2 + dy2 * dy2) > 0.5) {
-              drawSmoothedLine(x2, y2, mag2, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
-            }
-            if (t2 < 1) {
-              realtimeAnimRef.current = requestAnimationFrame(newAnimate);
-            } else {
-              realtimeAnimRef.current = null;
-            }
-          };
-          realtimeAnimRef.current = requestAnimationFrame(newAnimate);
-        }
-      }
+      drawSmoothedLine(lx, ly, lmag, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
+      // drawSmoothedLine updates realtimePrevRef internally — sync lastDrawn to match
+      realtimeLastDrawnRef.current = { x: lx, y: ly };
     };
 
-    realtimeAnimRef.current = requestAnimationFrame(animate);
-  }, [sensorData, playbackMode]);
-
-  // =================================================
-  // [TODO: NEED TO REVIEW] MOUSE POSITION CURSOR — maps screen coords to canvas
-  // =================================================
-  useEffect(() => {
-    if (!mousePos || !realtimeLayerRef.current || !sensorData) return;
-    
-    let color = {
-      path: new paper.Color(1, 0, 1, 0.8), // fuchsia
-      unCalibratedMouse: new paper.Color(1, 0, 0, 0.8), // red
-      calibratedMouse: new paper.Color(1, 1, 0, 0.9), // yellow
-    }
-
-    let currentMouseColor = color.unCalibratedMouse;
-    // State: calibrated
-    if (sensorData?.[sensorData.length - 1]?.calibrated) {
-      currentMouseColor = color.calibratedMouse;
-    } else {
-      currentMouseColor = color.unCalibratedMouse;
-    }
-
-    const canvasWidth = paper.view.size.width;
-    const canvasHeight = paper.view.size.height;
-    const screenW = window.screen.width;
-    const screenH = window.screen.height;
-
-    const canvasX = (mousePos.x / screenW) * canvasWidth;
-    const canvasY = (mousePos.y / screenH) * canvasHeight;
-
-    realtimeLayerRef.current.activate();
-
-    const pt = new paper.Point(canvasX, canvasY);
-
-    // Update or create the red cursor dot (always on top)
-    if (!mouseDotRef.current) {
-      mouseDotRef.current = new paper.Path.Circle({
-        center: pt,
-        radius: 6,
-        fillColor: currentMouseColor, // red (uncalibrated), yellow (calibrated)
-        strokeColor: new paper.Color(1, 1, 1, 0.6),
-        strokeWidth: 1.5,
-      });
-    } else {
-      mouseDotRef.current.position = pt;
-    }
-    mouseDotRef.current.bringToFront();
-
-    paper.view.draw();
-  }, [mousePos, sensorData]);
+    realtimeAnimRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (realtimeAnimRef.current) {
+        cancelAnimationFrame(realtimeAnimRef.current);
+        realtimeAnimRef.current = null;
+      }
+    };
+  }, [playbackMode]);
 
   // =================================================
   // PLAYBACK — reset layer when session changes
-  // ============================================n=====
+  // =================================================
   useEffect(() => {
     if (!playbackLayerRef.current) return;
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -609,9 +597,9 @@ export default function DrawingDisplay({ className }) {
           
           {sensorData?.length > 0 && sensorData[sensorData.length - 1]?.sensor != null && (
             <span className="text-green-300">
-                🎯 x: {sensorData[sensorData.length - 1].sensor.mouseTargetX?.toFixed(2) ?? '—'} y: {sensorData[sensorData.length - 1].sensor.mouseTargetY?.toFixed(2) ?? '—'}
-              </span>
-            )}
+              🎯 x: {sensorData[sensorData.length - 1].sensor.mouseTargetX?.toFixed(2) ?? '—'} y: {sensorData[sensorData.length - 1].sensor.mouseTargetY?.toFixed(2) ?? '—'}
+            </span>
+          )}
         </div>
       )}
 
