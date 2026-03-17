@@ -148,6 +148,16 @@ let targetY = null;
 let lerpX = null;
 let lerpY = null;
 
+// Lerp loop — runs at ~60fps, sends computed cursor pos to all dashboard clients
+let lerpIo = null; // set once io is created
+setInterval(() => {
+  if (!mouseEnabled || targetX === null || !lerpIo) return;
+  const t = 0.12;
+  lerpX = lerpX + (targetX - lerpX) * t;
+  lerpY = lerpY + (targetY - lerpY) * t;
+  lerpIo.emit('mouse-pos', { x: Math.round(lerpX), y: Math.round(lerpY) });
+}, 1000 / 60);
+
 // ===============================
 // Sensor Processing (no robot.js — uses client-reported screen/mouse)
 // ===============================
@@ -236,13 +246,7 @@ lerpIo = io; // give lerp loop access to io
 // ===============================
 const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://public.cloud.shiftr.io:1883";
 const MQTT_TOPIC = "kezia/imu/";
-const MQTT_SUBTOPIC = {
-	DATA: 'data',
-	DRAW: 'draw',
-	CLICK: 'click',
-	POWER: 'power',
-};
-
+const MQTT_SUBTOPIC = { DATA: "data", CONTROL: "control", POWER: "power" };
 
 const mqttClient = mqtt.connect(MQTT_BROKER, {
   username: process.env.MQTT_USER || "public",
@@ -336,26 +340,30 @@ mqttClient.on("connect", () => {
     }
 
     // --- CONTROL ---
-		// draw: "start" | "stop"
-		if (topic.includes(MQTT_SUBTOPIC.DRAW)) {
-			const value = message.toString().replace(/"/g, '').trim(); // strip quotes → "start" or "stop"
-			io.emit('sensor-draw', { draw: value, timestamp: Date.now() });
-			console.log(`✍🏻 Draw: ${value}`);
-		}
+    // draw: "start" | "stop"
+    // click: true (one-time)
+    if (topic.includes(MQTT_SUBTOPIC.CONTROL)) {
+      let parsed;
+      try { parsed = JSON.parse(message.toString()); }
+      catch (err) { console.error("MQTT control parse error:", err.message); return; }
 
-		// click: true (one-time)
-		if (topic.includes(MQTT_SUBTOPIC.CLICK)) {
-			let parsed;
-			try {
-				parsed = JSON.parse(message.toString());
-				io.emit('sensor-click', { timestamp: Date.now() });
-				console.log('🖱 Click relayed');
-        robot.mouseClick();
-			} catch (err) {
-				console.error('MQTT click parse error:', err.message);
-				return;
-			}
-		}
+      if (parsed.draw !== undefined) {
+        io.emit("sensor-draw", { draw: parsed.draw, timestamp: Date.now() });
+        console.log(`✍🏻 Draw: ${parsed.draw}`);
+      }
+
+      if (parsed.click === true) {
+        // Perform a mouse click using robotjs and play a sound for debug
+        try {
+          robot.mouseClick();
+          // Play a beep sound for debug
+          process.stdout.write('\x07'); // System bell
+          console.log("🖱 Mouse click performed via robotjs (beep)");
+        } catch (err) {
+          console.error("robotjs mouseClick error:", err.message);
+        }
+      }
+    }
   });
 
   mqttClient.on("error", (err) => console.error("MQTT error:", err));
@@ -407,6 +415,11 @@ io.on("connection", async (socket) => {
       targetX = pos.x; lerpX = pos.x;
       targetY = pos.y; lerpY = pos.y;
     }
+  });
+
+  // Local mouse agent reports cursor position → forward to dashboard clients
+  socket.on("mouse-pos", (pos) => {
+    socket.broadcast.emit("mouse-pos", pos);
   });
 
   socket.on("disconnect", () => console.log("🪫 Disconnected:", socket.id));

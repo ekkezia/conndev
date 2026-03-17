@@ -329,11 +329,10 @@ boolean connectToBroker()
 // ============== MQTT Util Fn =================
 void pulseClick()
 {
-  mqttClick = true;
-  publishControl();
-  // delay(50);
-  mqttClick = false;
-  publishControl();
+  if (!mqttClient.connected()) return;
+  mqttClient.beginMessage("kezia/imu/click");
+  mqttClient.print(true);
+  mqttClient.endMessage();
   Serial.println("CLICK!");
 }
 
@@ -347,13 +346,8 @@ void publishControl()
 {
   if (!mqttClient.connected())
     return;
-  mqttClient.beginMessage("kezia/imu/control");
-  mqttClient.print("{");
-  mqttClient.print("\"click\":");
-  mqttClient.print(mqttClick ? "true" : "false");
-  mqttClient.print(",\"draw\":");
+  mqttClient.beginMessage("kezia/imu/draw");
   mqttClient.print(drawState ? "\"start\"" : "\"stop\"");
-  mqttClient.print("}");
   mqttClient.endMessage();
 }
 
