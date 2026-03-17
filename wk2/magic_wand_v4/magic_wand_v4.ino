@@ -8,11 +8,11 @@
 #include <Wire.h>
 #include "arduino_secrets.h"
 #include <DFRobotDFPlayerMini.h>
-#include <SoftwareSerial.h>
+// #include <SoftwareSerial.h>
 
-SoftwareSerial dfSerial(10, 11); // RX, TX for DFPlayer Mini
-DFRobotDFPlayerMini dfplayer;
-bool dfplayerAvailable = false;
+// SoftwareSerial dfSerial(10, 11); // RX, TX for DFPlayer Mini
+// DFRobotDFPlayerMini dfplayer;
+// bool dfplayerAvailable = false;
 
 unsigned long debounceDelay = 50;
 
@@ -89,18 +89,20 @@ void setup()
   mag.enableAutoRange(true);
   timeClient.begin();
 
-  dfSerial.begin(9600);
-  if (dfplayer.begin(dfSerial))
-  {
-    dfplayerAvailable = true;
-    dfplayer.volume(20); // Set volume (0-30)
-    Serial.println("DFPlayer Mini detected.");
-  }
-  else
-  {
-    dfplayerAvailable = false;
-    Serial.println("DFPlayer Mini not detected, using buzzer.");
-  }
+  // dfSerial.begin(9600);
+  // if (dfplayer.begin(dfSerial))
+  // {
+  //   dfplayerAvailable = true;
+  //   dfplayer.volume(20); // Set volume (0-30)
+  //   Serial.println("DFPlayer Mini detected.");
+  // }
+  // else
+  // {
+  //   dfplayerAvailable = false;
+  //   Serial.println("DFPlayer Mini not detected, using buzzer.");
+  // }
+
+  publishPower(true); // publish power whenever it is turned on
 }
 
 void loop()
@@ -138,7 +140,7 @@ void loop()
       // perform mqtt draw
       pulseDraw();
       // play sound
-      makeDrawSound();
+      // makeDrawSound();
     }
   }
 
@@ -171,7 +173,7 @@ void loop()
           // performs mqtt click
           pulseClick();
           // plays sound
-          makeClickSound();
+          // makeClickSound();
         }
       }
     }
@@ -184,8 +186,8 @@ void loop()
     digitalWrite(starLedPins[i], drawState);
   // ====================================
 
-  if (!drawState)
-    return; // do not read and send mqtt sensor msg if drawState is LOW / 'stop'
+  // if (!drawState)
+  //   return; // do not read and send mqtt sensor msg if drawState is LOW / 'stop'
 
   // ================= SENSOR UPDATE =================
   // sends every x sendInterval
@@ -305,24 +307,24 @@ boolean connectToBroker()
 // ========================================
 
 // ============== Sound Util Fn =================
-void makeClickSound()
-{
-  if (dfplayerAvailable)
-  {
-    dfplayer.play(2); // Play 0002.mp3 for click
-  }
-}
+// void makeClickSound()
+// {
+//   if (dfplayerAvailable)
+//   {
+//     dfplayer.play(2); // Play 0002.mp3 for click
+//   }
+// }
 
-void makeDrawSound()
-{
-  if (dfplayerAvailable)
-  {
-    if (drawState)
-      dfplayer.play(1); // Play 0001.mp3 for draw start
-    else
-      dfplayer.play(3); // Play 0003.mp3 for draw stop (optional)
-  }
-}
+// void makeDrawSound()
+// {
+//   if (dfplayerAvailable)
+//   {
+//     if (drawState)
+//       dfplayer.play(1); // Play 0001.mp3 for draw start
+//     else
+//       dfplayer.play(3); // Play 0003.mp3 for draw stop (optional)
+//   }
+// }
 
 // ============== MQTT Util Fn =================
 void pulseClick()
