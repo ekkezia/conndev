@@ -138,10 +138,7 @@ async function endSession() {
 // Client-reported screen + cursor state
 // Updated via socket events from the frontend
 // ===============================
-const ROT_GAIN = 0.35;
-const TILT_GAIN = 3.5;
 const DEAD_ZONE = 1.2;
-let lastPitch = null;
 let clientScreenSize = { width: 1920, height: 1080 }; // updated by frontend on connect
 let targetX = null;
 let targetY = null;
@@ -149,32 +146,59 @@ let lerpX = null;
 let lerpY = null;
 
 // ===============================
-// Sensor Processing (no robot.js — uses client-reported screen/mouse)
+// Sensor Processing
 // ===============================
-function processSensorData(parsed, source = "mqtt") {
-  if (!parsed?.sensor) return null;
-  const data = parsed.sensor;
-  const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2); // Custom magnitude for stroke weight
-  const { width: screenW, height: screenH } = clientScreenSize;
+const WAND_CONFIG = {
+	x: { axis: 'gz', invert: true }, // left/right yaw
+	y: { axis: 'gy', invert: true }, // up/down tilt — swap gy/gx to taste
+	deadZone: DEAD_ZONE,
+};
 
-  // Init to screen center on first entry
-  if (targetX === null) {
-    targetX = screenW / 2;
-    targetY = screenH / 2;
-    lerpX = targetX;
-    lerpY = targetY;
-  }
+let netX = 0; // can go negative (left) or positive (right)
+let netZ = 0;
+let distX = 0; // always accumulates, never shrinks
+let distZ = 0;
 
-  // Absolute pitch from accelerometer
-  const pitch = Math.atan2(data.ax, Math.sqrt(data.ay ** 2 + data.az ** 2)) * 180 / Math.PI;
-  let sensitivity = data.sensitivity; // range: 0-10
+function getAxisValue(data, axis, invert) {
+	const raw = data[axis] ?? 0;
+	return Math.abs(raw) < WAND_CONFIG.deadZone ? 0 : invert ? -raw : raw;
+}
 
-  const moveX = Math.abs(data.gz) < DEAD_ZONE ? 0 : -data.gz * sensitivity;
-  const moveY = Math.abs(data.gx) < DEAD_ZONE ? 0 : -data.gx * sensitivity;
+// ===============================
+// Sensor Processing
+// ===============================
+function processSensorData(parsed, source = 'mqtt') {
+	if (!parsed?.sensor) return null;
+	const data = parsed.sensor;
+	const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2);
+	const { width: screenW, height: screenH } = clientScreenSize;
 
-  targetX = Math.max(0, Math.min(targetX + moveX, screenW - 1));
-  targetY = Math.max(0, Math.min(targetY + moveY, screenH - 1));
+	if (targetX === null) {
+		targetX = screenW / 2;
+		targetY = screenH / 2;
+		lerpX = targetX;
+		lerpY = targetY;
+	}
 
+	const sensitivity = data.sensitivity ?? 5;
+
+	const moveX =
+		getAxisValue(data, WAND_CONFIG.x.axis, WAND_CONFIG.x.invert) * sensitivity;
+	const moveY =
+		getAxisValue(data, WAND_CONFIG.y.axis, WAND_CONFIG.y.invert) * sensitivity;
+
+	targetX = Math.max(0, Math.min(targetX + moveX, screenW - 1));
+	targetY = Math.max(0, Math.min(targetY + moveY, screenH - 1));
+
+	// Track displacement
+	netX += moveX;
+	netZ += moveY;
+	distX += Math.abs(moveX);
+	distZ += Math.abs(moveY);
+
+	io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
+
+  // robotjs
   // Move the mouse using robotjs to the computed targetX, targetY
   try {
     robot.moveMouse(Math.round(targetX), Math.round(targetY));
@@ -182,13 +206,21 @@ function processSensorData(parsed, source = "mqtt") {
     console.error('robotjs moveMouse error:', err.message);
   }
 
-  return {
-    sensor: { ...data, mag, mouseTargetX: targetX, mouseTargetY: targetY },
-    screenSize: clientScreenSize,
-    // Arduino now sends epoch milliseconds
-    timestamp: parsed.timestamp || Date.now(),
-    source,
-  };
+	return {
+		sensor: {
+			...data,
+			mag,
+			mouseTargetX: targetX,
+			mouseTargetY: targetY,
+			netX,
+			netZ, // net displacement from start
+			distX,
+			distZ, // total distance traveled
+		},
+		screenSize: clientScreenSize,
+		timestamp: parsed.timestamp || Date.now(),
+		source,
+	};
 }
 
 // =============================== 

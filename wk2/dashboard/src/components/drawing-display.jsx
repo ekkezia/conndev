@@ -342,13 +342,127 @@ export default function DrawingDisplay({ className }) {
     mouseDotRef.current.bringToFront();
     paper.view.draw();
   }, [sensorData]);
+  
+  // --- RED DOT (MOUSE CURSOR) with LERP ---
+  const mouseDotLerpRef = useRef(null); // { x, y }
+  const mouseDotTargetRef = useRef(null); // { x, y }
+  const mouseDotRafRef = useRef(null);
+
+  // Update the target position for the red dot whenever sensorData changes
+  useEffect(() => {
+    if (!sensorData || sensorData.length === 0) return;
+    const s = sensorData[sensorData.length - 1];
+    if (!s?.sensor || !s?.screenSize) return;
+    const { mouseTargetX, mouseTargetY } = s.sensor;
+    const { width: screenW, height: screenH } = s.screenSize;
+    if (mouseTargetX == null || mouseTargetY == null || !screenW || !screenH) return;
+    const canvasWidth = paper.view.size.width;
+    const canvasHeight = paper.view.size.height;
+    const canvasX = Math.max(0, Math.min((mouseTargetX / screenW) * canvasWidth, canvasWidth));
+    const canvasY = Math.max(0, Math.min((mouseTargetY / screenH) * canvasHeight, canvasHeight));
+    mouseDotTargetRef.current = { x: canvasX, y: canvasY, s };
+    // If lerp ref is not set, initialize it immediately
+    if (!mouseDotLerpRef.current) {
+      mouseDotLerpRef.current = { x: canvasX, y: canvasY };
+    }
+  }, [sensorData]);
+
+  // Persistent rAF loop to lerp the red dot position
+  useEffect(() => {
+    let running = true;
+    function animate() {
+      if (!realtimeLayerRef.current) return;
+      const target = mouseDotTargetRef.current;
+      let lerp = mouseDotLerpRef.current;
+      if (target && lerp) {
+        // Lerp factor (tweak for smoothness vs. responsiveness)
+        const t = 0.22;
+        lerp.x = lerp.x + (target.x - lerp.x) * t;
+        lerp.y = lerp.y + (target.y - lerp.y) * t;
+        mouseDotLerpRef.current = lerp;
+
+        // Color logic (keep as before)
+        let color = {
+          path: new paper.Color(1, 0, 1, 0.8), // fuchsia
+          unCalibratedMouse: new paper.Color(1, 0, 0, 0.8), // red
+          calibratedMouse: new paper.Color(1, 1, 0, 0.9), // yellow
+        }
+        let currentMouseColor = color.unCalibratedMouse;
+        if (target.s?.calibrated) {
+          currentMouseColor = color.calibratedMouse;
+        }
+
+        realtimeLayerRef.current.activate();
+        const pt = new paper.Point(lerp.x, lerp.y);
+
+        // Always update or create the red cursor dot (always on top)
+        if (!mouseDotRef.current) {
+          mouseDotRef.current = new paper.Path.Circle({
+            center: pt,
+            radius: 6,
+            fillColor: currentMouseColor, // red (uncalibrated), yellow (calibrated)
+            strokeColor: new paper.Color(1, 1, 1, 0.6),
+            strokeWidth: 1.5,
+          });
+        } else {
+          mouseDotRef.current.position = pt;
+          mouseDotRef.current.fillColor = currentMouseColor;
+        }
+        mouseDotRef.current.bringToFront();
+        paper.view.draw();
+      }
+      if (running) mouseDotRafRef.current = requestAnimationFrame(animate);
+    }
+    mouseDotRafRef.current = requestAnimationFrame(animate);
+    return () => {
+      running = false;
+      if (mouseDotRafRef.current) cancelAnimationFrame(mouseDotRafRef.current);
+    };
+  }, []);
 
   // =================================================
   // REALTIME MODE — keep drawStateRef current so the rAF loop can read it
   // =================================================
+  // Track previous draw state to detect transitions
+  const prevDrawStateRef = useRef(drawState?.draw);
   useEffect(() => {
     drawStateRef.current = drawState;
-  }, [drawState]);
+
+    // If draw mode transitions from false to true, reset all draw refs (pen up/down)
+    if (prevDrawStateRef.current === false && drawState?.draw === true) {
+      // Get the current cursor position from the latest sensor data
+      if (sensorData && sensorData.length > 0) {
+        const s = sensorData[sensorData.length - 1];
+        if (s?.sensor && s?.screenSize) {
+          const { mouseTargetX, mouseTargetY, mag } = s.sensor;
+          const { width: screenW, height: screenH } = s.screenSize;
+          if (screenW && screenH && mouseTargetX != null && mouseTargetY != null) {
+            const canvasW = paper.view.size.width;
+            const canvasH = paper.view.size.height;
+            const canvasX = (mouseTargetX / screenW) * canvasW;
+            const canvasY = (mouseTargetY / screenH) * canvasH;
+            realtimeLastDrawnRef.current = null;
+            realtimePrevRef.current = new paper.Point(canvasX, canvasY);
+            realtimePrevRef.current.mag = mag ?? 1;
+            realtimePosRef.current = new paper.Point(canvasX, canvasY);
+          } else {
+            realtimeLastDrawnRef.current = null;
+            realtimePrevRef.current = null;
+            realtimePosRef.current = null;
+          }
+        } else {
+          realtimeLastDrawnRef.current = null;
+          realtimePrevRef.current = null;
+          realtimePosRef.current = null;
+        }
+      } else {
+        realtimeLastDrawnRef.current = null;
+        realtimePrevRef.current = null;
+        realtimePosRef.current = null;
+      }
+    }
+    prevDrawStateRef.current = drawState?.draw;
+  }, [drawState, sensorData]);
 
   // Update target whenever new sensor data arrives
   useEffect(() => {
