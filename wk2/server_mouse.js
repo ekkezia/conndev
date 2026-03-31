@@ -404,7 +404,6 @@ io.on("connection", async (socket) => {
     try {
       const snapshot = await get(ref(db, "sessions"));
       let sessions = [];
-      
       if (snapshot.exists()) {
         const data = snapshot.val();
         // Firebase stores arrays as objects with numeric keys - convert to array
@@ -414,7 +413,11 @@ io.on("connection", async (socket) => {
           sessions = data;
         }
       }
-      
+      // Ensure all session.data is an array
+      sessions = sessions.map(session => ({
+        ...session,
+        data: Array.isArray(session.data) ? session.data : (session.data && typeof session.data === 'object' ? Object.values(session.data) : [])
+      }));
       socket.emit("sensor-initial-data", sessions);
     } catch (err) {
       console.error("Socket initial data fetch error:", err.message);

@@ -24,9 +24,9 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
-const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
+// const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
 // Problem: the Render server is super slow and laggy
-// const IS_LOCAL = true;
+const IS_LOCAL = true; 
 console.log(
 	`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`,
 );
@@ -143,7 +143,7 @@ async function endSession() {
 // Client-reported screen + cursor state
 // Updated via socket events from the frontend
 // ===============================
-const DEAD_ZONE = 1.2;
+const DEAD_ZONE = 5;
 let clientScreenSize = { width: 1920, height: 1080 }; // updated by frontend on connect
 let targetX = null;
 let targetY = null;
@@ -297,7 +297,14 @@ mqttClient.on('connect', () => {
 				io.emit('sensor-realtime-receive', entry);
 
 				// Write directly to Firebase if session is active (skip if local)
-				if (currentSessionIndex !== null && !IS_LOCAL) {
+				// Only send to Firebase if entry.sensor has data (not empty)
+				if (
+					currentSessionIndex !== null &&
+					!IS_LOCAL &&
+					entry &&
+					entry.sensor &&
+					Object.keys(entry.sensor).length > 0
+				) {
 					console.log(
 						`📝 Received MQTT data, writing to session ${currentSessionIndex}`,
 					);
@@ -414,33 +421,37 @@ mqttClient.on('connect', () => {
 io.on('connection', async (socket) => {
 	console.log('🔌 Client connected:', socket.id);
 
-	// Fetch initial sessions from Firebase (skip if local)
-	if (!IS_LOCAL) {
-		try {
-			const snapshot = await get(ref(db, 'sessions'));
-			let sessions = [];
+	   // Fetch initial sessions from Firebase (skip if local)
+	   if (!IS_LOCAL) {
+		   try {
+			   const snapshot = await get(ref(db, 'sessions'));
+			   let sessions = [];
 
-			if (snapshot.exists()) {
-				const data = snapshot.val();
-				// Firebase stores arrays as objects with numeric keys - convert to array
-				if (typeof data === 'object' && !Array.isArray(data)) {
-					sessions = Object.values(data);
-				} else if (Array.isArray(data)) {
-					sessions = data;
-				}
-			}
-
-			socket.emit('sensor-initial-data', sessions);
-		} catch (err) {
-			console.error('Socket initial data fetch error:', err.message);
-			socket.emit('sensor-initial-data', []);
-		}
-	} else {
-		console.log(
-			'🏠 Local mode - skipping Firebase read, sending empty sessions',
-		);
-		socket.emit('sensor-initial-data', []);
-	}
+			   if (snapshot.exists()) {
+				   const data = snapshot.val();
+				   // Firebase stores arrays as objects with numeric keys - convert to array
+				   if (typeof data === 'object' && !Array.isArray(data)) {
+					   sessions = Object.values(data);
+				   } else if (Array.isArray(data)) {
+					   sessions = data;
+				   }
+			   }
+			   // Ensure all session.data is an array
+			   sessions = sessions.map(session => ({
+				   ...session,
+				   data: Array.isArray(session.data) ? session.data : (session.data && typeof session.data === 'object' ? Object.values(session.data) : [])
+			   }));
+			   socket.emit('sensor-initial-data', sessions);
+		   } catch (err) {
+			   console.error('Socket initial data fetch error:', err.message);
+			   socket.emit('sensor-initial-data', []);
+		   }
+	   } else {
+		   console.log(
+			   '🏠 Local mode - skipping Firebase read, sending empty sessions',
+		   );
+		   socket.emit('sensor-initial-data', []);
+	   }
 
 	socket.emit('user', { id: socket.id });
 
