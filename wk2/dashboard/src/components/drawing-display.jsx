@@ -10,6 +10,7 @@ export default function DrawingDisplay({ className }) {
 
   // ----- LAYERS -----
   const gridLayerRef = useRef(null);
+  const shapeLayerRef = useRef(null);
   const realtimeLayerRef = useRef(null);
   const playbackLayerRef = useRef(null);
 
@@ -57,11 +58,13 @@ export default function DrawingDisplay({ className }) {
 
     // ----- CREATE LAYERS -----
     gridLayerRef.current = new paper.Layer();
+    shapeLayerRef.current = new paper.Layer();
     realtimeLayerRef.current = new paper.Layer();
     playbackLayerRef.current = new paper.Layer();
 
     gridLayerRef.current.sendToBack();
-    realtimeLayerRef.current.insertAbove(gridLayerRef.current);
+    shapeLayerRef.current.insertAbove(gridLayerRef.current);
+    realtimeLayerRef.current.insertAbove(shapeLayerRef.current);
     playbackLayerRef.current.insertAbove(realtimeLayerRef.current);
 
     // ----- INIT POSITIONS -----
@@ -177,6 +180,23 @@ export default function DrawingDisplay({ className }) {
       fontSize: 16,
       fontWeight: "bold",
     });
+
+    // =========================
+    // ⭐️ DRAW STAR GUIDE
+    // =========================
+    shapeLayerRef.current.activate();
+
+    const star = new paper.Path.Star({
+      center,
+      points: 5,
+      radius1: 300,
+      radius2: 150,
+      strokeColor: new paper.Color(1, 0, 1, 0.4),
+      strokeWidth: 10,
+      fillColor: null,
+      dashArray: [6, 5],
+    });
+    star.smooth({ type: 'catmull-rom', factor: 0 });
 
     paper.view.draw();
 
@@ -384,7 +404,7 @@ export default function DrawingDisplay({ className }) {
         // Color logic (keep as before)
         let color = {
           path: new paper.Color(1, 0, 1, 0.8), // fuchsia
-          unCalibratedMouse: new paper.Color(1, 0, 0, 0.8), // red
+          unCalibratedMouse: new paper.Color(1, 0, 1, 0.8), // fuchsia
           calibratedMouse: new paper.Color(1, 1, 0, 0.9), // yellow
         }
         let currentMouseColor = color.unCalibratedMouse;
