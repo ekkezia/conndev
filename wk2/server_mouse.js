@@ -24,7 +24,6 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
 const robot = require("robotjs");
-const { spawn } = require("child_process");
 
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
@@ -32,9 +31,9 @@ const { spawn } = require("child_process");
 const IS_LOCAL = true;
 console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`);
 
-let mouseEnabled = false;
+let mouseEnabled = true;
 let drawState = null; // 'start' | 'stop' | null
-let mouseControlEnabled = false; // set to false to disable robotjs mouse movement
+let mouseControlEnabled = true; // set to false to force disable robotjs mouse movement
 
 // ===============================
 // Firebase Session Tracking

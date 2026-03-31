@@ -24,7 +24,6 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
 const robot = require("robotjs");
-const { spawn } = require("child_process");
 
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
@@ -33,6 +32,8 @@ const IS_LOCAL = true;
 console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`);
 
 let mouseEnabled = false;
+let drawState = null; // 'start' | 'stop' | null
+let mouseControlEnabled = false; // set to false to force disable robotjs mouse movement
 
 // ===============================
 // Firebase Session Tracking
@@ -138,67 +139,91 @@ async function endSession() {
 // Client-reported screen + cursor state
 // Updated via socket events from the frontend
 // ===============================
-const ROT_GAIN = 0.35;
-const TILT_GAIN = 3.5;
 const DEAD_ZONE = 1.2;
-let lastPitch = null;
 let clientScreenSize = { width: 1920, height: 1080 }; // updated by frontend on connect
 let targetX = null;
 let targetY = null;
 let lerpX = null;
 let lerpY = null;
 
-// Lerp loop — runs at ~60fps, sends computed cursor pos to all dashboard clients
-let lerpIo = null; // set once io is created
-setInterval(() => {
-  if (!mouseEnabled || targetX === null || !lerpIo) return;
-  const t = 0.12;
-  lerpX = lerpX + (targetX - lerpX) * t;
-  lerpY = lerpY + (targetY - lerpY) * t;
-  lerpIo.emit('mouse-pos', { x: Math.round(lerpX), y: Math.round(lerpY) });
-}, 1000 / 60);
+// ===============================
+// Sensor Processing
+// ===============================
+const WAND_CONFIG = {
+	x: { axis: 'gz', invert: true }, // left/right yaw
+	y: { axis: 'gy', invert: true }, // up/down tilt — swap gy/gx to taste
+	deadZone: DEAD_ZONE,
+};
+
+let netX = 0; // can go negative (left) or positive (right)
+let netZ = 0;
+let distX = 0; // always accumulates, never shrinks
+let distZ = 0;
+
+function getAxisValue(data, axis, invert) {
+	const raw = data[axis] ?? 0;
+	return Math.abs(raw) < WAND_CONFIG.deadZone ? 0 : invert ? -raw : raw;
+}
 
 // ===============================
-// Sensor Processing (no robot.js — uses client-reported screen/mouse)
+// Sensor Processing
 // ===============================
-function processSensorData(parsed, source = "mqtt") {
-  if (!parsed?.sensor) return null;
-  const data = parsed.sensor;
-  const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2); // Custom magnitude for stroke weight
-  const { width: screenW, height: screenH } = clientScreenSize;
+function processSensorData(parsed, source = 'mqtt') {
+	if (!parsed?.sensor) return null;
+	const data = parsed.sensor;
+	const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2);
+	const { width: screenW, height: screenH } = clientScreenSize;
 
-  // Init to screen center on first entry
-  if (targetX === null) {
-    targetX = screenW / 2;
-    targetY = screenH / 2;
-    lerpX = targetX;
-    lerpY = targetY;
+	if (targetX === null) {
+		targetX = screenW / 2;
+		targetY = screenH / 2;
+		lerpX = targetX;
+		lerpY = targetY;
+	}
+
+	const sensitivity = data.sensitivity ?? 5;
+
+	const moveX =
+		getAxisValue(data, WAND_CONFIG.x.axis, WAND_CONFIG.x.invert) * sensitivity;
+	const moveY =
+		getAxisValue(data, WAND_CONFIG.y.axis, WAND_CONFIG.y.invert) * sensitivity;
+
+	targetX = Math.max(0, Math.min(targetX + moveX, screenW - 1));
+	targetY = Math.max(0, Math.min(targetY + moveY, screenH - 1));
+
+	// Track displacement
+	netX += moveX;
+	netZ += moveY;
+	distX += Math.abs(moveX);
+	distZ += Math.abs(moveY);
+
+	io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
+
+  // robotjs
+  if (mouseControlEnabled) {
+    try {
+      robot.moveMouse(Math.round(targetX), Math.round(targetY));
+    } catch (err) {
+      console.error('robotjs moveMouse error:', err.message);
+    }
   }
 
-  // Absolute pitch from accelerometer
-  const pitch = Math.atan2(data.ax, Math.sqrt(data.ay ** 2 + data.az ** 2)) * 180 / Math.PI;
-  let sensitivity = data.sensitivity; // range: 0-10
-
-  const moveX = Math.abs(data.gz) < DEAD_ZONE ? 0 : -data.gz * sensitivity;
-  const moveY = Math.abs(data.gx) < DEAD_ZONE ? 0 : -data.gx * sensitivity;
-
-  targetX = Math.max(0, Math.min(targetX + moveX, screenW - 1));
-  targetY = Math.max(0, Math.min(targetY + moveY, screenH - 1));
-
-  // Move the mouse using robotjs to the computed targetX, targetY
-  try {
-    robot.moveMouse(Math.round(targetX), Math.round(targetY));
-  } catch (err) {
-    console.error('robotjs moveMouse error:', err.message);
-  }
-
-  return {
-    sensor: { ...data, mag, mouseTargetX: targetX, mouseTargetY: targetY },
-    screenSize: clientScreenSize,
-    // Arduino now sends epoch milliseconds
-    timestamp: parsed.timestamp || Date.now(),
-    source,
-  };
+	return {
+		sensor: {
+			...data,
+			mag,
+			mouseTargetX: targetX,
+			mouseTargetY: targetY,
+			netX,
+			netZ, // net displacement from start
+			distX,
+			distZ, // total distance traveled
+		},
+		screenSize: clientScreenSize,
+		timestamp: parsed.timestamp || Date.now(),
+		source,
+		draw: drawState,
+	};
 }
 
 // =============================== 
@@ -206,11 +231,6 @@ function processSensorData(parsed, source = "mqtt") {
 // ===============================
 app.get("/", (req, res) => res.send({ status: "ok", message: "Hello Magic Wand 🪄" }));
 app.get("/sensor-data", async (req, res) => {
-  if (IS_LOCAL) {
-    console.log("🏠 Local mode - returning empty sessions");
-    return res.json([]);
-  }
-  
   try {
     const snapshot = await get(ref(db, "sessions"));
     let sessions = [];
@@ -224,7 +244,6 @@ app.get("/sensor-data", async (req, res) => {
         sessions = data;
       }
     }
-    
     res.json(sessions);
   } catch (err) {
     console.error("GET /sensor-data error:", err.message);
@@ -246,7 +265,13 @@ lerpIo = io; // give lerp loop access to io
 // ===============================
 const MQTT_BROKER = process.env.MQTT_BROKER || "mqtt://public.cloud.shiftr.io:1883";
 const MQTT_TOPIC = "kezia/imu/";
-const MQTT_SUBTOPIC = { DATA: "data", CONTROL: "control", POWER: "power" };
+const MQTT_SUBTOPIC = {
+	DATA: 'data',
+	DRAW: 'draw',
+	CLICK: 'click',
+	POWER: 'power',
+};
+
 
 const mqttClient = mqtt.connect(MQTT_BROKER, {
   username: process.env.MQTT_USER || "public",
@@ -340,30 +365,27 @@ mqttClient.on("connect", () => {
     }
 
     // --- CONTROL ---
-    // draw: "start" | "stop"
-    // click: true (one-time)
-    if (topic.includes(MQTT_SUBTOPIC.CONTROL)) {
-      let parsed;
-      try { parsed = JSON.parse(message.toString()); }
-      catch (err) { console.error("MQTT control parse error:", err.message); return; }
+		// draw: "start" | "stop"
+		if (topic.includes(MQTT_SUBTOPIC.DRAW)) {
+			const value = message.toString().replace(/"/g, '').trim(); // strip quotes → "start" or "stop"
+			drawState = value;
+			io.emit('sensor-draw', { draw: value, timestamp: Date.now() });
+			console.log(`✍🏻 Draw: ${value}`);
+		}
 
-      if (parsed.draw !== undefined) {
-        io.emit("sensor-draw", { draw: parsed.draw, timestamp: Date.now() });
-        console.log(`✍🏻 Draw: ${parsed.draw}`);
-      }
-
-      if (parsed.click === true) {
-        // Perform a mouse click using robotjs and play a sound for debug
-        try {
-          robot.mouseClick();
-          // Play a beep sound for debug
-          process.stdout.write('\x07'); // System bell
-          console.log("🖱 Mouse click performed via robotjs (beep)");
-        } catch (err) {
-          console.error("robotjs mouseClick error:", err.message);
-        }
-      }
-    }
+		// click: true (one-time)
+		if (topic.includes(MQTT_SUBTOPIC.CLICK)) {
+			let parsed;
+			try {
+				parsed = JSON.parse(message.toString());
+				io.emit('sensor-click', { timestamp: Date.now() });
+				console.log('🖱 Click relayed');
+        if (mouseControlEnabled) robot.mouseClick();
+			} catch (err) {
+				console.error('MQTT click parse error:', err.message);
+				return;
+			}
+		}
   });
 
   mqttClient.on("error", (err) => console.error("MQTT error:", err));
@@ -375,29 +397,29 @@ mqttClient.on("connect", () => {
 io.on("connection", async (socket) => {
   console.log("🔌 Client connected:", socket.id);
 
-  // Fetch initial sessions from Firebase (skip if local)
-  if (!IS_LOCAL) {
-    try {
-      const snapshot = await get(ref(db, "sessions"));
-      let sessions = [];
-      
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        // Firebase stores arrays as objects with numeric keys - convert to array
-        if (typeof data === 'object' && !Array.isArray(data)) {
-          sessions = Object.values(data);
-        } else if (Array.isArray(data)) {
-          sessions = data;
-        }
+  // Always fetch initial sessions from Firebase, regardless of IS_LOCAL
+  try {
+    const snapshot = await get(ref(db, "sessions"));
+    let sessions = [];
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      // Firebase stores arrays as objects with numeric keys - convert to array
+      if (typeof data === 'object' && !Array.isArray(data)) {
+        sessions = Object.values(data);
+      } else if (Array.isArray(data)) {
+        sessions = data;
       }
-      
-      socket.emit("sensor-initial-data", sessions);
-    } catch (err) {
-      console.error("Socket initial data fetch error:", err.message);
-      socket.emit("sensor-initial-data", []);
     }
-  } else {
-    console.log("🏠 Local mode - skipping Firebase read, sending empty sessions");
+
+    console.log(`📦 Fetched ${sessions.length} sessions from Firebase for new client`);
+    // Ensure all session.data is an array
+    sessions = sessions.map(session => ({
+      ...session,
+      data: Array.isArray(session.data) ? session.data : (session.data && typeof session.data === 'object' ? Object.values(session.data) : [])
+    }));
+    socket.emit("sensor-initial-data", sessions);
+  } catch (err) {
+    console.error("Socket initial data fetch error:", err.message);
     socket.emit("sensor-initial-data", []);
   }
   
@@ -415,11 +437,6 @@ io.on("connection", async (socket) => {
       targetX = pos.x; lerpX = pos.x;
       targetY = pos.y; lerpY = pos.y;
     }
-  });
-
-  // Local mouse agent reports cursor position → forward to dashboard clients
-  socket.on("mouse-pos", (pos) => {
-    socket.broadcast.emit("mouse-pos", pos);
   });
 
   socket.on("disconnect", () => console.log("🪫 Disconnected:", socket.id));
