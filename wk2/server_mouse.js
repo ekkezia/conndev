@@ -33,6 +33,8 @@ const IS_LOCAL = true;
 console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`);
 
 let mouseEnabled = false;
+let drawState = null; // 'start' | 'stop' | null
+let mouseControlEnabled = false; // set to false to disable robotjs mouse movement
 
 // ===============================
 // Firebase Session Tracking
@@ -199,11 +201,12 @@ function processSensorData(parsed, source = 'mqtt') {
 	io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
 
   // robotjs
-  // Move the mouse using robotjs to the computed targetX, targetY
-  try {
-    robot.moveMouse(Math.round(targetX), Math.round(targetY));
-  } catch (err) {
-    console.error('robotjs moveMouse error:', err.message);
+  if (mouseControlEnabled) {
+    try {
+      robot.moveMouse(Math.round(targetX), Math.round(targetY));
+    } catch (err) {
+      console.error('robotjs moveMouse error:', err.message);
+    }
   }
 
 	return {
@@ -220,6 +223,7 @@ function processSensorData(parsed, source = 'mqtt') {
 		screenSize: clientScreenSize,
 		timestamp: parsed.timestamp || Date.now(),
 		source,
+		draw: drawState,
 	};
 }
 
@@ -228,11 +232,6 @@ function processSensorData(parsed, source = 'mqtt') {
 // ===============================
 app.get("/", (req, res) => res.send({ status: "ok", message: "Hello Magic Wand 🪄" }));
 app.get("/sensor-data", async (req, res) => {
-  if (IS_LOCAL) {
-    console.log("🏠 Local mode - returning empty sessions");
-    return res.json([]);
-  }
-  
   try {
     const snapshot = await get(ref(db, "sessions"));
     let sessions = [];
@@ -246,7 +245,6 @@ app.get("/sensor-data", async (req, res) => {
         sessions = data;
       }
     }
-    
     res.json(sessions);
   } catch (err) {
     console.error("GET /sensor-data error:", err.message);
@@ -371,6 +369,7 @@ mqttClient.on("connect", () => {
 		// draw: "start" | "stop"
 		if (topic.includes(MQTT_SUBTOPIC.DRAW)) {
 			const value = message.toString().replace(/"/g, '').trim(); // strip quotes → "start" or "stop"
+			drawState = value;
 			io.emit('sensor-draw', { draw: value, timestamp: Date.now() });
 			console.log(`✍🏻 Draw: ${value}`);
 		}
@@ -382,7 +381,7 @@ mqttClient.on("connect", () => {
 				parsed = JSON.parse(message.toString());
 				io.emit('sensor-click', { timestamp: Date.now() });
 				console.log('🖱 Click relayed');
-        robot.mouseClick();
+        if (mouseControlEnabled) robot.mouseClick();
 			} catch (err) {
 				console.error('MQTT click parse error:', err.message);
 				return;
@@ -399,32 +398,29 @@ mqttClient.on("connect", () => {
 io.on("connection", async (socket) => {
   console.log("🔌 Client connected:", socket.id);
 
-  // Fetch initial sessions from Firebase (skip if local)
-  if (!IS_LOCAL) {
-    try {
-      const snapshot = await get(ref(db, "sessions"));
-      let sessions = [];
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        // Firebase stores arrays as objects with numeric keys - convert to array
-        if (typeof data === 'object' && !Array.isArray(data)) {
-          sessions = Object.values(data);
-        } else if (Array.isArray(data)) {
-          sessions = data;
-        }
+  // Always fetch initial sessions from Firebase, regardless of IS_LOCAL
+  try {
+    const snapshot = await get(ref(db, "sessions"));
+    let sessions = [];
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      // Firebase stores arrays as objects with numeric keys - convert to array
+      if (typeof data === 'object' && !Array.isArray(data)) {
+        sessions = Object.values(data);
+      } else if (Array.isArray(data)) {
+        sessions = data;
       }
-      // Ensure all session.data is an array
-      sessions = sessions.map(session => ({
-        ...session,
-        data: Array.isArray(session.data) ? session.data : (session.data && typeof session.data === 'object' ? Object.values(session.data) : [])
-      }));
-      socket.emit("sensor-initial-data", sessions);
-    } catch (err) {
-      console.error("Socket initial data fetch error:", err.message);
-      socket.emit("sensor-initial-data", []);
     }
-  } else {
-    console.log("🏠 Local mode - skipping Firebase read, sending empty sessions");
+
+    console.log(`📦 Fetched ${sessions.length} sessions from Firebase for new client`);
+    // Ensure all session.data is an array
+    sessions = sessions.map(session => ({
+      ...session,
+      data: Array.isArray(session.data) ? session.data : (session.data && typeof session.data === 'object' ? Object.values(session.data) : [])
+    }));
+    socket.emit("sensor-initial-data", sessions);
+  } catch (err) {
+    console.error("Socket initial data fetch error:", err.message);
     socket.emit("sensor-initial-data", []);
   }
   

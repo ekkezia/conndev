@@ -44,7 +44,7 @@ export function IMUProvider({ children }) {
   // (selectedSession itself is a stale snapshot; sessions[] is the live source of truth)
   const selectedSessionData = useMemo(() => {
     if (!selectedSession) return sensorData;
-    const live = sessions.find((s) => s.id === selectedSession.id);
+    const live = sessions.find((s) => s && s.id === selectedSession.id);
     return live?.data ?? sensorData;
   }, [selectedSession, sessions, sensorData]);
 
@@ -82,12 +82,14 @@ export function IMUProvider({ children }) {
       }
 
       // Ensure each session's data is an array (Firebase stores as object with numeric keys)
-      processedIncomingSessions = processedIncomingSessions.map(session => ({
-        ...session,
-        data: session.data && typeof session.data === 'object' && !Array.isArray(session.data)
-          ? Object.values(session.data)
-          : (Array.isArray(session.data) ? session.data : [])
-      }));
+      processedIncomingSessions = processedIncomingSessions
+        .filter(session => session != null)
+        .map(session => ({
+          ...session,
+          data: session.data && typeof session.data === 'object' && !Array.isArray(session.data)
+            ? Object.values(session.data)
+            : (Array.isArray(session.data) ? session.data : [])
+        }));
 
       console.log('📦 Loaded sessions:', processedIncomingSessions.length);
 
@@ -140,12 +142,14 @@ export function IMUProvider({ children }) {
         const freshSessions = await response.json();
 
         // Convert data to arrays if needed
-        const processedSessions = freshSessions.map(session => ({
-          ...session,
-          data: session.data && typeof session.data === 'object' && !Array.isArray(session.data)
-            ? Object.values(session.data)
-            : (Array.isArray(session.data) ? session.data : [])
-        }));
+        const processedSessions = freshSessions
+          .filter(session => session != null)
+          .map(session => ({
+            ...session,
+            data: session.data && typeof session.data === 'object' && !Array.isArray(session.data)
+              ? Object.values(session.data)
+              : (Array.isArray(session.data) ? session.data : [])
+          }));
 
         setSessions(processedSessions);
         setSessionsUpdated(Date.now()); // Trigger update notification
