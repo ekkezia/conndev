@@ -23,7 +23,13 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
-const robot = require("robotjs");
+let robot = null;
+try {
+  robot = require("robotjs");
+  console.log('🤖 robotjs loaded');
+} catch (err) {
+  console.warn('⚠️ robotjs not available (mouse control disabled):', err.message);
+}
 
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
@@ -200,7 +206,7 @@ function processSensorData(parsed, source = 'mqtt') {
 	io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
 
   // robotjs
-  if (mouseControlEnabled) {
+  if (mouseControlEnabled && robot) {
     try {
       robot.moveMouse(Math.round(targetX), Math.round(targetY));
     } catch (err) {
@@ -380,7 +386,7 @@ mqttClient.on("connect", () => {
 				parsed = JSON.parse(message.toString());
 				io.emit('sensor-click', { timestamp: Date.now() });
 				console.log('🖱 Click relayed');
-        if (mouseControlEnabled) robot.mouseClick();
+        if (mouseControlEnabled && robot) robot.mouseClick();
 			} catch (err) {
 				console.error('MQTT click parse error:', err.message);
 				return;

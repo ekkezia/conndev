@@ -1,7 +1,6 @@
 // ===============================
 // server_relay.js
 // Handles: MQTT → Socket.IO → Firebase
-// Mouse control with robotjs is handled by server_mouse_local.js running on each user's machine
 // ===============================
 
 require('dotenv').config();
@@ -23,8 +22,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'dashboard/build')));
 
-const robot = require("robotjs");
-
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
 // Problem: the Render server is super slow and laggy
@@ -33,7 +30,6 @@ console.log(`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' :
 
 let mouseEnabled = false;
 let drawState = null; // 'start' | 'stop' | null
-let mouseControlEnabled = false; // set to false to force disable robotjs mouse movement
 
 // ===============================
 // Firebase Session Tracking
@@ -198,15 +194,6 @@ function processSensorData(parsed, source = 'mqtt') {
 	distZ += Math.abs(moveY);
 
 	io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
-
-  // robotjs
-  if (mouseControlEnabled) {
-    try {
-      robot.moveMouse(Math.round(targetX), Math.round(targetY));
-    } catch (err) {
-      console.error('robotjs moveMouse error:', err.message);
-    }
-  }
 
 	return {
 		sensor: {
@@ -380,7 +367,6 @@ mqttClient.on("connect", () => {
 				parsed = JSON.parse(message.toString());
 				io.emit('sensor-click', { timestamp: Date.now() });
 				console.log('🖱 Click relayed');
-        if (mouseControlEnabled) robot.mouseClick();
 			} catch (err) {
 				console.error('MQTT click parse error:', err.message);
 				return;
