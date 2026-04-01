@@ -112,73 +112,51 @@ export default function DrawingDisplay({ className }) {
       strokeWidth: 1,
     });
 
-    // X positive →
-    let xIndex = 0;
-    for (let x = center.x; x <= width; x += spacing) {
+    // X axis: hue 0 (left) to 360 (right)
+    let hueMin = 0;
+    let hueMax = 360;
+    for (let x = 0; x <= width; x += spacing) {
+      // Linear mapping from x to hue
+      const hue = Math.round(hueMin + (hueMax - hueMin) * (x / width));
       new paper.PointText({
         point: [x, center.y + 15],
-        content: xIndex.toString(),
+        content: hue.toString(),
         fillColor: "white",
         fontSize: 10,
         justification: "center",
       });
-      xIndex++;
     }
-
-    // X negative ←
-    xIndex = -1;
-    for (let x = center.x - spacing; x >= 0; x -= spacing) {
-      new paper.PointText({
-        point: [x, center.y + 15],
-        content: xIndex.toString(),
-        fillColor: "white",
-        fontSize: 10,
-        justification: "center",
-      });
-      xIndex--;
-    }
-
-    // Y positive ↑
-    let yIndex = 0;
-    for (let y = center.y; y >= 0; y -= spacing) {
-      new paper.PointText({
-        point: [center.x + 5, y + 4],
-        content: yIndex.toString(),
-        fillColor: "white",
-        fontSize: 10,
-        justification: "left",
-      });
-      yIndex++;
-    }
-
-    // Y negative ↓
-    yIndex = -1;
-    for (let y = center.y + spacing; y <= height; y += spacing) {
-      new paper.PointText({
-        point: [center.x + 5, y + 4],
-        content: yIndex.toString(),
-        fillColor: "white",
-        fontSize: 10,
-        justification: "left",
-      });
-      yIndex--;
-    }
-
-    // Big axis labels
+    // Label for X axis
     new paper.PointText({
-      point: [width - 25, center.y - 10],
-      content: "X",
+      point: [width - 40, center.y - 18],
+      content: "hue",
       fillColor: "white",
       fontSize: 16,
       fontWeight: "bold",
     });
 
+    // Y axis: brightness 100 (top) to 0 (bottom)
+    let briMin = 0;
+    let briMax = 100;
+    for (let y = 0; y <= height; y += spacing) {
+      // Linear mapping from y to brightness (invert: top=100, bottom=0)
+      const bri = Math.round(briMax - (briMax - briMin) * (y / height));
+      new paper.PointText({
+        point: [center.x + 8, y + 4],
+        content: bri.toString(),
+        fillColor: "white",
+        fontSize: 10,
+        justification: "left",
+      });
+    }
+    // Label for Y axis (brightness, placed at top)
     new paper.PointText({
-      point: [center.x + 10, 20],
-      content: "Y",
+      point: [center.x + 18, 32],
+      content: "brightness",
       fillColor: "white",
       fontSize: 16,
       fontWeight: "bold",
+      justification: "left",
     });
 
     // =========================
@@ -612,7 +590,7 @@ export default function DrawingDisplay({ className }) {
 
     const targetIdx = playbackStatus.currentDataIdx ?? (playbackData.length - 1);
 
-    // Helper: batch-draw all points up to idx instantly (no lerp)
+    // Helper: batch-draw all points up to idx instantly (no lerp), splitting paths on draw: stop/start
     const batchDraw = (upToIdx) => {
       if (animFrameRef.current) { cancelAnimationFrame(animFrameRef.current); animFrameRef.current = null; }
       playbackLayerRef.current.removeChildren();
@@ -621,19 +599,25 @@ export default function DrawingDisplay({ className }) {
       playbackPrevRef.current = null;
       lerpPosRef.current = null;
 
-      const allPts = [];
+      let prevDraw = null;
+      let firstPt = null;
       for (let i = 0; i <= upToIdx; i++) {
-        const pt = getPoint(playbackData[i]);
-        if (pt) allPts.push(pt);
-      }
-      if (allPts.length > 0) {
-        playbackPosRef.current = new paper.Point(allPts[0].x, allPts[0].y);
-        playbackPrevRef.current = new paper.Point(allPts[0].x, allPts[0].y);
-        lerpPosRef.current = { x: allPts[0].x, y: allPts[0].y };
-        for (let i = 1; i < allPts.length; i++) {
-          drawSmoothedLine(allPts[i].x, allPts[i].y, allPts[i].mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+        const entry = playbackData[i];
+        const pt = getPoint(entry);
+        if (!pt) continue;
+        if (entry.draw === 'start' || firstPt === null || prevDraw === 'stop') {
+          // Start a new path segment
+          playbackPosRef.current = new paper.Point(pt.x, pt.y);
+          playbackPrevRef.current = new paper.Point(pt.x, pt.y);
+          lerpPosRef.current = { x: pt.x, y: pt.y };
+          firstPt = pt;
+        } else {
+          drawSmoothedLine(pt.x, pt.y, pt.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
         }
-        lerpPosRef.current = { x: allPts[allPts.length - 1].x, y: allPts[allPts.length - 1].y };
+        prevDraw = entry.draw;
+      }
+      if (firstPt) {
+        lerpPosRef.current = { x: firstPt.x, y: firstPt.y };
         lastDrawnIdxRef.current = upToIdx;
       }
       paper.view.draw();

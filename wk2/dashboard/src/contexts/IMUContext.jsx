@@ -7,7 +7,7 @@ const IMUContext = createContext(null);
 
 export function IMUProvider({ children }) {
   const [mouseEnabled, setMouseEnabled] = useState(false);
-  const [playbackMode, setPlaybackMode] = useState(false); // toggle false = drawing real time, / true = playback
+  const [playbackMode, setPlaybackMode] = useState(false); // false = draw, true = playback
   const [playbackStatus, setPlaybackStatus] = useState({ progress: null, clippedTimestamp: null, currentTimestamp: null, currentDataIdx: null, isPlaying: false }); // default to play, false for pause
   const [sensorData, setSensorData] = useState([]); // live entries for current session
   const [sessions, setSessions] = useState([]); // full session history: [{ id, startTimestamp, data[] }]
@@ -19,6 +19,10 @@ export function IMUProvider({ children }) {
   const [drawState, setDrawState] = useState({ draw: false, timestamp: null });
   const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
   const [click, setClick] = useState(false); // click state for animation
+  const [phillips, setPhillips] = useState({
+    hue: 0,
+    bri: 0
+  }); // phillips head animation state
 
   // Optional click tone to debug
   const playClickTone = useCallback(() => {
@@ -124,47 +128,15 @@ export function IMUProvider({ children }) {
           console.warn('⚠️ Session already exists, skipping duplicate');
           return prev;
         }
+        // Ensure data is array
         const sessionWithArrayData = {
           ...newSession,
-          data: Array.isArray(newSession.data) ? newSession.data : []
+          data: Array.isArray(newSession.data)
+            ? newSession.data
+            : (newSession.data && typeof newSession.data === 'object' ? Object.values(newSession.data) : [])
         };
         return [...prev, sessionWithArrayData];
       });
-      setSelectedSession({ ...newSession, data: [] });
-      setSensorData([]);
-      setSessionsUpdated(Date.now()); // Trigger update notification
-    });
-    socket.current.on('session-ended', async (data) => {
-      console.log('📁 Session ended:', data);
-      // Fetch fresh session data from server to ensure sync
-      try {
-        const response = await fetch(`${REACT_APP_SERVER_URL}/sensor-data`);
-        const freshSessions = await response.json();
-
-        // Convert data to arrays if needed
-        const processedSessions = freshSessions
-          .filter(session => session != null)
-          .map(session => ({
-            ...session,
-            data: session.data && typeof session.data === 'object' && !Array.isArray(session.data)
-              ? Object.values(session.data)
-              : (Array.isArray(session.data) ? session.data : [])
-          }));
-
-        setSessions(processedSessions);
-        setSessionsUpdated(Date.now()); // Trigger update notification
-        console.log('✅ Sessions refreshed after session end');
-      } catch (err) {
-        console.error('Failed to refresh sessions:', err);
-        // Fallback: update by index
-        setSessions((prev) => {
-          const updated = [...prev];
-          if (updated[data.index]) {
-            updated[data.index] = { ...updated[data.index], endTimestamp: data.endTimestamp };
-          }
-          return updated;
-        });
-      }
     });
 
     socket.current.on('sensor-draw', (data) => {
@@ -233,7 +205,9 @@ export function IMUProvider({ children }) {
     setSelectedSession,
     selectedSessionData, // live data for the selected session (always fresh)
     sessionsUpdated, // timestamp for animation/update detection
-    drawState, // <-- add drawState to context value
+    drawState,
+    phillips,
+    setPhillips,
   };
 
   return <IMUContext.Provider value={value}>{children}</IMUContext.Provider>;

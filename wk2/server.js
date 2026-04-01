@@ -32,6 +32,13 @@ let mouseEnabled = false;
 let drawState = null; // 'start' | 'stop' | null
 
 // ===============================
+// Phillips Hue Integration
+// ===============================
+let phillipsPower = false;
+let lastPhillipsToggle = 0; // timestamp of last toggle
+const PHILLIPS_POWER_GX_THRESHOLD = 100; // phillips hue is powered on / off by turning the magic wand hard
+
+// ===============================
 // Firebase Session Tracking
 // ===============================
 let currentSessionIndex = null;
@@ -169,7 +176,7 @@ function processSensorData(parsed, source = 'mqtt') {
 	const data = parsed.sensor;
 	const mag = Math.sqrt(data.gx ** 2 + data.gy ** 2);
 	const { width: screenW, height: screenH } = clientScreenSize;
-
+  
 	if (targetX === null) {
 		targetX = screenW / 2;
 		targetY = screenH / 2;
@@ -194,6 +201,9 @@ function processSensorData(parsed, source = 'mqtt') {
 	distZ += Math.abs(moveY);
 
 	io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
+
+  // Optionally update Phillips Hue state based on sensor data
+  updatePhillipsLight(parsed, { x: targetX, y: targetY });
 
 	return {
 		sensor: {
@@ -280,6 +290,7 @@ mqttClient.on("connect", () => {
       try {
         const parsed = JSON.parse(message.toString());
         const entry = processSensorData(parsed, "mqtt");
+        
         if (!entry) return;
 
         // console.log('📥 Emitting to clients', entry);
@@ -427,6 +438,37 @@ io.on("connection", async (socket) => {
 
   socket.on("disconnect", () => console.log("🪫 Disconnected:", socket.id));
 });
+
+// ===============================
+// Phillips Light API Integration (placeholder)
+// ===============================
+function updatePhillipsLight(parsed, mousePos = null) {
+  if (!parsed?.sensor) return null;
+	const data = parsed.sensor;
+
+  // Phillips Hue power control by hard flick of the wand (gx spike) with debounce
+  const now = Date.now();
+  if (Math.abs(data.gx) > PHILLIPS_POWER_GX_THRESHOLD) {
+    if (now - lastPhillipsToggle > 3000) { // 3 seconds debounce
+      phillipsPower = !phillipsPower;
+      lastPhillipsToggle = now;
+      console.log(`💡 Phillips Hue power toggled: ${phillipsPower ? 'ON' : 'OFF'} (gx: ${data.gx})`);
+      // send to HTTP
+    } else {
+      // Optionally log debounce event
+      // console.log('💡 Phillips Hue toggle debounced');
+    }
+  }
+
+  // mouse pos x: map to hue, y: map to brightness
+  if (mousePos) {
+    const hue = Math.round((mousePos.x / clientScreenSize.width) * 360);
+    const bri = Math.round((1 - mousePos.y / clientScreenSize.height) * 100);
+    // send to HTTP
+    console.log(`💡 Phillips Hue update: hue=${hue}, bri=${bri}`);
+  }
+
+}
 
 // ===============================
 // START

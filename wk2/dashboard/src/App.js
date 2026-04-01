@@ -8,7 +8,6 @@ import { useRef, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { REACT_APP_SERVER_URL } from './config';
 import DrawingDisplay from './components/drawing-display';
-
 function App() {
   const [mode, setMode] = useState(false); // false = drawing, true = light
   const [showVisualizationToggle, setShowVisualizationToggle] = useState(false);
