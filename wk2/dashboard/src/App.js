@@ -8,6 +8,8 @@ import { useRef, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { REACT_APP_SERVER_URL } from './config';
 import DrawingDisplay from './components/drawing-display';
+import HuePanel from './components/hue-panel';
+
 function App() {
   const [mode, setMode] = useState(false); // false = drawing, true = light
   const [showVisualizationToggle, setShowVisualizationToggle] = useState(false);
@@ -51,12 +53,16 @@ function App() {
           <DashboardDisplay />
           
           {/* Bottom Right */}
-          <PlaybackDisplay />
+          <div className="fixed bottom-4 right-4 flex flex-col items-end gap-4 pointer-events-none">
+            <HuePanel />
+            <PlaybackDisplay />
+          </div>
         </div>
 
       {mode && <R3FCanvas />}
       {!mode && <DrawingDisplay />}
       </div>
+
   );
 }
 

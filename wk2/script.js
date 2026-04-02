@@ -17,7 +17,49 @@ function setup() {
   generateDivContent(url);
   // set an interval to run fetchText() every 5 seconds:
   setInterval(fetchText, 1000);
+  
+  // Initial check of the test light:
+  getLights();
 }
+
+// ===============================
+// Phillips Hue Light API Integration
+// ===============================
+// IP address of the Hue hub:
+let address = '172.22.151.181';
+// username on the hub:
+let username = 'LKupp4wLAFngFG9ZGB39DlH7bWseg0iwEOA3SOqn';
+// full URL for request:
+let requestUrl = 'http://' + address + '/api/' + username + '/';
+
+// Callback for many Hue properties
+function setLight(lightNum, change) {
+  let params = {
+    method: 'PUT',
+    headers: {
+      'accept': 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(change)
+  };
+  
+  fetch(requestUrl + 'lights/' + lightNum + '/state', params)
+    .then(response => response.json())
+    .then(data => {
+      console.log('HUE Response:', data);
+      // Traditionally the tutorial suggests calling getLights() here:
+      // getLights();
+    })
+    .catch(error => console.error('HUE error:', error));
+}
+
+function getLights() {
+  fetch(requestUrl + 'lights')
+    .then(response => response.json())
+    .then(data => console.log('Current Lights state:', data))
+    .catch(error => console.error('HUE error:', error));
+}
+
 
 
 // make an HTTP call to get a text file:
@@ -67,7 +109,17 @@ function draw(name, sensor) {
   // get the direction of the angle by calculating difference of gyrometer values ?
   
   console.log(`Sensor data - gx: ${gx}, gy: ${gy}, gz: ${gz}, ax: ${ax}, ay: ${ay}, az: ${az}`);
+
+  // Control light with sensor data (mapping gyro yaw/tilt to hue/brightness)
+  // Phillips ranges: hue 0-65535, bri 0-254
+  const lightId = 2;
+  const hue = Math.round(map(gx, -180, 180, 0, 65535));
+  const bri = Math.round(map(gy, -180, 180, 0, 254));
+  
+  // To avoid spamming the hub, you can debounce this or use a button trigger
+  // setLight(lightId, { hue, bri });
 }
+
 
 function generateDivContent(url) {
   fetch(url)
