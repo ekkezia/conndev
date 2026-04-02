@@ -544,7 +544,7 @@ function setLight(lightNum, change) {
 getLights();
 
 // Test call to light 2 as requested:
-setLight(lightNumber, { on: true, bri: 254, hue: 30181 });
+// setLight(lightNumber, { on: true, bri: 254, hue: 30181 });
 
 
 function updatePhillipsLight(parsed, mousePos = null) {

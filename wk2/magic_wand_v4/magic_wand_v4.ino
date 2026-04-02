@@ -279,6 +279,11 @@ void connectToNetwork()
     WiFi.begin(SECRET_SSID, SECRET_PASS);
     delay(1000);
   }
+
+  digitalWrite(starLedPins[0], HIGH);
+  delay(200);
+  digitalWrite(starLedPins[0], LOW);
+  delay(200);
 }
 // ========================================
 
