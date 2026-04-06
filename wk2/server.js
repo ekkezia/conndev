@@ -490,9 +490,9 @@ io.on('connection', async (socket) => {
 // Phillips Light API Integration (placeholder)
 // ===============================
 // IP address of the Hue hub:
-let address = process.env.REACT_APP_PHILLIPS_HUE_ADDRESS || '172.22.151.226';
+let address = process.env.REACT_APP_PHILLIPS_HUE_ADDRESS;
 // username on the hub:
-let username = process.env.REACT_APP_PHILLIPS_HUE_USERNAME || 'MOGJCaSKiJrgmJ7aHZhShYp7jf3z6vUFSM5bqcP3';
+let username = process.env.REACT_APP_PHILLIPS_HUE_USERNAME;
 // full URL for request:
 let requestUrl = 'http://' + address + '/api/' + username + '/';
 // light number that you want to change:
