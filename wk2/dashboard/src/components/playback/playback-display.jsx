@@ -242,10 +242,10 @@ export default function PlaybackDisplay({ className }) {
   }, [isOpen, setIsOpen]);
 
   return (
-    <div ref={displayRef}>
+    <div ref={displayRef} className="pointer-events-auto">
       {/* Session history sidebar */}
       {isOpen && (
-        <div className={`absolute w-72 top-[10%] right-2 bg-black/90 border border-white/10 rounded-xl max-h-[70vh] overflow-y-auto flex flex-col gap-0.5 p-1.5 transition-all duration-300 ${sessionsPulse ? 'ring-2 ring-cyan-400/50' : ''}`}>
+        <div className={`fixed bottom-20 right-4 z-50 w-72 bg-black/90 border border-white/10 rounded-xl max-h-[70vh] overflow-y-auto flex flex-col gap-0.5 p-1.5 transition-all duration-300 pointer-events-auto ${sessionsPulse ? 'ring-2 ring-cyan-400/50' : ''}`}>
           <div className="text-[10px] text-white/40 font-mono px-2 py-1 uppercase tracking-widest">Sessions</div>
           {sessions.length === 0 && (
             <div className="text-[11px] text-white/30 font-mono px-2 py-3 text-center">No sessions yet</div>
@@ -294,7 +294,7 @@ export default function PlaybackDisplay({ className }) {
       >
         {!isOpen && <span className="w-full h-full flex items-center justify-center text-xl">🕘</span>}
         {isOpen && (
-          <div className={clsx("flex flex-col min-w-[80vw] h-fit p-2 max-w-[80vw] gap-2", className)} onClick={(e) => e.stopPropagation()}>
+          <div className={clsx("flex flex-col min-w-[80vw] h-fit p-2 max-w-[80vw] gap-2 pointer-events-auto", className)} onClick={(e) => e.stopPropagation()}>
             <div className="rounded-lg border border-white/10 bg-black/80 px-3 py-2 flex items-center gap-3">
               <button
                 type="button"

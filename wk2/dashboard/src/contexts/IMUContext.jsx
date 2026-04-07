@@ -15,6 +15,7 @@ export function IMUProvider({ children }) {
   const [enableHelper, setEnableHelper] = useState(false);
   const [showDotmap, setShowDotmap] = useState(false);
   const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
+  const mousePosRef = useRef(null); // always-current mousePos for use in socket closures
   const [clear, setClear] = useState(false);
   const [drawState, setDrawState] = useState({ draw: false, timestamp: null });
   const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
@@ -146,6 +147,7 @@ export function IMUProvider({ children }) {
 
     socket.current.on('sensor-processed-mouse-pos', (pos) => {
       setMousePos(pos);
+      mousePosRef.current = pos;
     });
 
     socket.current.on('sensor-click', () => {
@@ -158,16 +160,16 @@ export function IMUProvider({ children }) {
       playClickTone();
 
       // 3. trigger browser click at last known mouse position
-      // TODO
-      if (mousePos) {
-        const el = document.elementFromPoint(mousePos.x, mousePos.y);
+      const currentMousePos = mousePosRef.current;
+      if (currentMousePos) {
+        const el = document.elementFromPoint(currentMousePos.x, currentMousePos.y);
         if (el) {
           el.dispatchEvent(
             new MouseEvent('click', {
               bubbles: true,
               cancelable: true,
-              clientX: mousePos.x,
-              clientY: mousePos.y,
+              clientX: currentMousePos.x,
+              clientY: currentMousePos.y,
             })
           );
         }

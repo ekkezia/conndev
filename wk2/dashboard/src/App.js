@@ -9,9 +9,13 @@ import { io } from 'socket.io-client';
 import { REACT_APP_SERVER_URL } from './config';
 import DrawingDisplay from './components/drawing-display';
 import HuePanel from './components/hue-panel';
+import BeatGame from './components/beat-game';
+
+const MODES = ['draw', 'game', 'light'];
+const MODE_ICONS = { draw: '✏️', game: '🎮', light: '🔦' };
 
 function App() {
-  const [mode, setMode] = useState(false); // false = drawing, true = light
+  const [mode, setMode] = useState('draw'); // 'draw' | 'game' | 'light'
   const [showVisualizationToggle, setShowVisualizationToggle] = useState(false);
 
   const socket = useRef(null);
@@ -43,8 +47,8 @@ function App() {
           </div>
 
           {/* Top Right */}
-          <MenuButton className="top-4 right-4 items-center justify-center flex" onClick={() => setMode(!mode)}>
-            <span className="text-xl">{mode ? '🔦' : '✏️'}</span>
+          <MenuButton className="top-4 right-4 items-center justify-center flex" onClick={() => setMode(m => MODES[(MODES.indexOf(m) + 1) % MODES.length])}>
+            <span className="text-xl">{MODE_ICONS[mode]}</span>
           </MenuButton>
 
           {/* <UserDisplay user={user} /> */}
@@ -54,13 +58,14 @@ function App() {
           
           {/* Bottom Right */}
           <div className="fixed bottom-4 right-4 flex flex-col items-end gap-4 pointer-events-none">
-            <HuePanel />
+            {/* <HuePanel /> */}
             <PlaybackDisplay />
           </div>
         </div>
 
-      {mode && <R3FCanvas />}
-      {!mode && <DrawingDisplay />}
+      {mode === 'light' && <R3FCanvas />}
+      {mode === 'draw' && <DrawingDisplay />}
+      {mode === 'game' && <BeatGame />}
       </div>
 
   );

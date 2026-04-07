@@ -204,7 +204,7 @@ function processSensorData(parsed, source = 'mqtt') {
 	io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
 
 	// Optionally update Phillips Hue state based on sensor data
-	updatePhillipsLight(parsed, { x: targetX, y: targetY });
+	// updatePhillipsLight(parsed, { x: targetX, y: targetY });
 
 	return {
 		sensor: {
