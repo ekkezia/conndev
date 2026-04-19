@@ -1,10 +1,10 @@
+// with neopixel
 #include <Arduino_LSM6DS3.h>
 #include <WiFiNINA.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include <ArduinoMqttClient.h>
 #include <Wire.h>
-#include <Adafruit_NeoPixel.h>
 #include "arduino_secrets.h"
 
 // ================= WIFI + MQTT =================
@@ -13,10 +13,24 @@ MqttClient mqttClient(wifi);
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000);
 
-// ================= NEOPIXELS =================
-#define NEOPIXEL_PIN 6
-#define STAR_LED_COUNT 5
-Adafruit_NeoPixel pixels(STAR_LED_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+// ================= DEBUG UTILS =================
+void blinkSuccess(int pin) {
+  mqttClient.poll();
+  digitalWrite(pin, HIGH); delay(200);
+  digitalWrite(pin, LOW);  delay(200);
+}
+
+void blinkFail(int pin) {
+  for (int i = 0; i < 5; i++) {
+    mqttClient.poll();
+    digitalWrite(pin, HIGH); delay(80);
+    digitalWrite(pin, LOW);  delay(80);
+  }
+}
+
+// ================= LEDs =================
+int starLedPins[] = {2, 3, 4, 5, 6};
+const int starLedCount = 5;
 
 // ================= MQTT =================
 char broker[] = "public.cloud.shiftr.io";
@@ -30,12 +44,12 @@ const int sendInterval = 200;
 unsigned long lastMqttSend = 0;
 unsigned long debounceDelay = 50;
 
-// ================= SENSORS =================
+// ================= SENSORES =================
 float ax, ay, az, gx, gy, gz;
 int sensitivity;
 
-// ================= BUTTONS =================
-const int drawBtnPin = 11;
+// ================= BOTONES =================
+const int drawBtnPin  = 11;
 int drawState = LOW, drawBtnState = HIGH, lastDrawBtnState = HIGH;
 unsigned long lastDrawBtnDebounce = 0;
 
@@ -48,85 +62,25 @@ bool ntpStarted = false;
 bool ntpBegun = false;
 unsigned long lastNtpUpdate = 0;
 
-// ================= PIXEL PULSE =================
-unsigned long led4On = 0;
-bool mqttPulseActive = false;
-
-// =========================================
-// NEOPIXEL HELPERS
-// =========================================
-void showAllPixels(uint32_t color) {
-  for (int i = 0; i < STAR_LED_COUNT; i++) {
-    pixels.setPixelColor(i, color);
-  }
-  pixels.show();
-}
-
-void clearPixels() {
-  pixels.clear();
-  pixels.show();
-}
-
-void setSinglePixel(int index, uint32_t color) {
-  pixels.clear();
-  if (index >= 0 && index < STAR_LED_COUNT) {
-    pixels.setPixelColor(index, color);
-  }
-  pixels.show();
-}
-
-void showIdleState() {
-  if (drawState) {
-    showAllPixels(pixels.Color(40, 40, 40));
-  } else {
-    clearPixels();
-  }
-}
-
-// =========================================
-// DEBUG UTILS
-// =========================================
-void blinkSuccess(int index) {
-  mqttClient.poll();
-  setSinglePixel(index, pixels.Color(0, 150, 0));
-  delay(200);
-  clearPixels();
-  delay(200);
-}
-
-void blinkFail(int index) {
-  for (int i = 0; i < 5; i++) {
-    mqttClient.poll();
-    setSinglePixel(index, pixels.Color(150, 0, 0));
-    delay(80);
-    clearPixels();
-    delay(80);
-  }
-}
-
 // =========================================
 void setup() {
   Serial.begin(115200);
   delay(500);
 
   pinMode(clickBtnPin, INPUT_PULLUP);
-  pinMode(drawBtnPin, INPUT_PULLUP);
-
-  pixels.begin();
-  pixels.clear();
-  pixels.setBrightness(50);
-  pixels.show();
+  pinMode(drawBtnPin,  INPUT_PULLUP);
+  for (int i = 0; i < starLedCount; i++)
+    pinMode(starLedPins[i], OUTPUT);
 
   // ------ TEST 0: WiFi ------
   bool wifiOk = connectToNetworkDebug();
-  wifiOk ? blinkSuccess(0) : blinkFail(0);
+  wifiOk ? blinkSuccess(starLedPins[0]) : blinkFail(starLedPins[0]);
   if (!wifiOk) { hangWithBlink(0); return; }
 
   byte mac[6];
   WiFi.macAddress(mac);
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 3; i++)
     clientID += String(mac[i], HEX);
-  }
 
   // ------ TEST 1: MQTT ------
   mqttClient.setId(clientID);
@@ -134,7 +88,7 @@ void setup() {
   mqttClient.setKeepAliveInterval(6000);
 
   bool mqttOk = connectToBrokerDebug();
-  mqttOk ? blinkSuccess(1) : blinkFail(1);
+  mqttOk ? blinkSuccess(starLedPins[1]) : blinkFail(starLedPins[1]);
   if (!mqttOk) { hangWithBlink(1); return; }
 
   // ------ TEST 2: IMU ------
@@ -142,34 +96,34 @@ void setup() {
   IMU.begin();
   delay(50);
   bool imuOk = IMU.accelerationAvailable() || IMU.gyroscopeAvailable();
-  imuOk ? blinkSuccess(2) : blinkFail(2);
+  imuOk ? blinkSuccess(starLedPins[2]) : blinkFail(starLedPins[2]);
   if (!imuOk) { hangWithBlink(2); return; }
 
-  // ------ TEST 4: MQTT SEND ------
+  // ------ TEST 4: Envío MQTT ------
   mqttClient.poll();
   delay(50);
 
-  setSinglePixel(4, pixels.Color(0, 0, 150));
-  delay(50);
-  clearPixels();
+  digitalWrite(starLedPins[4], HIGH); delay(50);
+  digitalWrite(starLedPins[4], LOW);  delay(50);
 
   if (!mqttClient.connected()) {
-    blinkFail(4);
+    blinkFail(starLedPins[4]);
     hangWithBlink(4);
     return;
   }
 
+  mqttClient.poll();
   mqttClient.beginMessage("kezia/test");
   mqttClient.print("ok");
   int endResult = mqttClient.endMessage();
 
   if (endResult != 1) {
-    blinkFail(4);
+    blinkFail(starLedPins[4]);
     hangWithBlink(4);
     return;
   }
 
-  blinkSuccess(4);
+  blinkSuccess(starLedPins[4]);
   Serial.println("Setup completo.");
 }
 
@@ -200,9 +154,8 @@ void loop() {
 
   // ====== DRAW START/STOP ======
   int drawBtnReading = digitalRead(drawBtnPin);
-  if (drawBtnReading != lastDrawBtnState) {
+  if (drawBtnReading != lastDrawBtnState)
     lastDrawBtnDebounce = millis();
-  }
 
   if ((millis() - lastDrawBtnDebounce) > debounceDelay) {
     if (drawBtnReading != drawBtnState) {
@@ -210,18 +163,19 @@ void loop() {
       if (drawBtnState == LOW) {
         drawState = !drawState;
         animateStarLEDs();
-        pulseDraw();
       }
+      pulseDraw();
     }
   }
+  for (int i = 0; i < starLedCount; i++)
+    digitalWrite(starLedPins[i], drawState);
   lastDrawBtnState = drawBtnReading;
 
   // ====== CLICK ======
   if (drawState) {
     int clickBtnReading = digitalRead(clickBtnPin);
-    if (clickBtnReading != lastClickBtnState) {
+    if (clickBtnReading != lastClickBtnState)
       lastClickBtnDebounce = millis();
-    }
 
     if ((millis() - lastClickBtnDebounce) > debounceDelay) {
       if (clickBtnReading != clickBtnState) {
@@ -235,37 +189,38 @@ void loop() {
     lastClickBtnState = clickBtnReading;
   }
 
+  for (int i = 0; i < starLedCount; i++)
+    digitalWrite(starLedPins[i], drawState);
+
   // ====== SENSOR + MQTT ======
   if (now - lastMqttSend >= sendInterval) {
     lastMqttSend = now;
 
     if (IMU.accelerationAvailable()) IMU.readAcceleration(ax, ay, az);
-    if (IMU.gyroscopeAvailable()) IMU.readGyroscope(gx, gy, gz);
+    if (IMU.gyroscopeAvailable())    IMU.readGyroscope(gx, gy, gz);
 
     int sensitivityReading = analogRead(A3);
     sensitivity = floor(map(sensitivityReading, 0, 1023, 1, 10));
 
     if (mqttClient.connected()) {
       publishMqtt();
-
-      pixels.setPixelColor(4, pixels.Color(0, 0, 150));
-      pixels.show();
-      led4On = now;
-      mqttPulseActive = true;
+      digitalWrite(starLedPins[4], HIGH);
+    } else {
+      digitalWrite(starLedPins[4], drawState);
     }
   }
 
-  // Restore idle state after pixel 4 pulse
-  if (mqttPulseActive && now - led4On > 30) {
-    mqttPulseActive = false;
-    showIdleState();
-  } else if (!mqttPulseActive) {
-    showIdleState();
+  // Apagar LED 4 después de 30ms sin usar delay
+  static unsigned long led4On = 0;
+  if (digitalRead(starLedPins[4]) == HIGH && now - led4On > 30) {
+    digitalWrite(starLedPins[4], drawState);
+    led4On = now;
   }
-}
+
+} // fin loop()
 
 // =========================================
-// NETWORK
+// FUNCIONES DE RED
 // =========================================
 bool connectToNetworkDebug() {
   int attempts = 0;
@@ -275,12 +230,10 @@ bool connectToNetworkDebug() {
     delay(1000);
     attempts++;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi OK");
     return true;
   }
-
   Serial.println("WiFi FALLO");
   return false;
 }
@@ -296,7 +249,6 @@ bool connectToBrokerDebug() {
     Serial.println(mqttClient.connectError());
     return false;
   }
-
   Serial.println("Broker OK");
   return true;
 }
@@ -305,7 +257,7 @@ void hangWithBlink(int ledIndex) {
   Serial.print("COLGADO en paso ");
   Serial.println(ledIndex);
   while (true) {
-    blinkFail(ledIndex);
+    blinkFail(starLedPins[ledIndex]);
     delay(1000);
   }
 }
@@ -314,22 +266,21 @@ void hangWithBlink(int ledIndex) {
 // LED ANIMATIONS
 // =========================================
 void animateStarLEDs() {
-  for (int i = 0; i < STAR_LED_COUNT; i++) {
-    setSinglePixel(i, pixels.Color(100, 100, 100));
-    delay(80);
+  for (int i = 0; i < starLedCount; i++) {
+    digitalWrite(starLedPins[i], HIGH); delay(80);
+    digitalWrite(starLedPins[i], LOW);
   }
-  for (int i = STAR_LED_COUNT - 2; i > 0; i--) {
-    setSinglePixel(i, pixels.Color(100, 100, 100));
-    delay(80);
+  for (int i = starLedCount - 2; i > 0; i--) {
+    digitalWrite(starLedPins[i], HIGH); delay(80);
+    digitalWrite(starLedPins[i], LOW);
   }
-  clearPixels();
 }
 
 void blinkAllStars() {
   for (int j = 0; j < 3; j++) {
-    showAllPixels(pixels.Color(150, 150, 150));
+    for (int i = 0; i < starLedCount; i++) digitalWrite(starLedPins[i], HIGH);
     delay(80);
-    clearPixels();
+    for (int i = 0; i < starLedCount; i++) digitalWrite(starLedPins[i], LOW);
     delay(80);
   }
 }

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="script.js"></script>
+  <title>Readings</title>
+</head>
+<style>
+  body {
+    font-family: monospace;
+    margin: 20px;
+  }
+
+  .hole {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 20vw;
+    height: 20vw;
+    background: transparent;
+    /* create a large blue outside area while keeping the center transparent */
+    box-shadow: 0 0 0 1000px rgba(255,255,255,0.95);
+    border-radius: 999px;
+    pointer-events: none;
+    transition: transform 0.5s ease; 
+    pointer-events: none;
+  }
+  .hole::after {
+    content: '';
+    position: relative;
+    width: 20vw;
+    height: 20vw;
+    background: transparent;
+    box-shadow: inset 0 0 10px 20px rgba(255,255,255,0.95);
+    border-radius: 999px;
+    display: block;
+  }
+
+  video#camera {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    object-fit: cover;
+    z-index: 0;
+  }
+
+  .mask {
+    z-index: 2;
+  }
+
+  #content {
+    font-family: "Linux Libertine", "Georgia", "Times", "Times New Roman", serif;
+    display: none;
+  }
+
+  #toggle-mode {
+    position: absolute;
+    top: 0;
+    transform: translate(-50%, 0);
+  }
+
+</style>
+<body>
+  <video id="camera" autoplay playsinline muted></video>
+
+  <div id="content"></div>
+
+  <div id="hole" class="hole"></div>
+
+  <button id="toggle-mode">camera</button>
+</body>
+</html>
