@@ -3,7 +3,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <JPEGDEC.h>
-#include "cameras.h"
+#include <ArduinoJson.h>
 #include "arduino_secrets.h"
 
 // ---------- TFT ----------
@@ -24,9 +24,21 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 char ssid[] = SECRET_SSID;
 char pass[] = SECRET_PASS;
 
+// ---------- Direct API ----------
+const char* API_HOST = "webcams.nyctmc.org";
+const int   API_PORT = 443;
+const char* CAMERA_LIST_PATH = "/api/cameras";
+
 // ---------- Location ----------
-const float USER_LAT = 40.69234f;
-const float USER_LON = -73.987453f;
+// Replace these with real GPS updates later
+float userLat = 40.69234f;
+float userLon = -73.987453f;
+bool hasLocation = true;
+
+float lastFetchLat = 0.0f;
+float lastFetchLon = 0.0f;
+bool hasFetchedNearestOnce = false;
+const float NEAREST_REFETCH_THRESHOLD_METERS = 25.0f;
 
 // ---------- Screen ----------
 #define SCREEN_W 280
@@ -43,21 +55,29 @@ const float USER_LON = -73.987453f;
 
 #define INFO_X 8
 #define INFO_Y 24
-#define INFO_W 220
+#define INFO_W 264
 #define TITLE_Y 24
 #define DIST_Y  44
 
 // ---------- State ----------
 const int MAX_NEAREST = 5;
-int nearestIndices[MAX_NEAREST];
-float nearestDistances[MAX_NEAREST];
+const int MAX_CAPTURES = 10;
+
+struct Camera {
+  char id[40];
+  char name[96];
+  float lat;
+  float lon;
+  char imageUrl[140];
+  float distanceMeters;
+};
+
+Camera nearestCameras[MAX_NEAREST];
 int nearestCount = 0;
 int selectedNearest = 0;   // 0..nearestCount, where nearestCount = GALLERY item
 
-const int MAX_CAPTURES = 10;
-
 struct CaptureRecord {
-  int cameraIndex;
+  Camera cam;
   unsigned long capturedAtMs;
 };
 
@@ -97,6 +117,13 @@ struct NetJPEGFile {
 
 NetJPEGFile netFile;
 
+// ---------- Chunked Reader ----------
+struct ChunkedReader {
+  WiFiSSLClient* client;
+  int remainingInChunk;
+  bool done;
+};
+
 // ---------- Helpers ----------
 const char* wifiStatusToString(int s) {
   switch (s) {
@@ -129,11 +156,35 @@ void logWifiStatus(const char* prefix) {
   }
 }
 
+void safeCopy(char* dst, size_t dstSize, const char* src) {
+  if (!dst || dstSize == 0) return;
+  if (!src) {
+    dst[0] = '\0';
+    return;
+  }
+  strncpy(dst, src, dstSize - 1);
+  dst[dstSize - 1] = '\0';
+}
+
+void clearNearestList() {
+  nearestCount = 0;
+  selectedNearest = 0;
+
+  for (int i = 0; i < MAX_NEAREST; i++) {
+    nearestCameras[i].id[0] = '\0';
+    nearestCameras[i].name[0] = '\0';
+    nearestCameras[i].imageUrl[0] = '\0';
+    nearestCameras[i].lat = 0.0f;
+    nearestCameras[i].lon = 0.0f;
+    nearestCameras[i].distanceMeters = 99999999.0f;
+  }
+}
+
 bool selectedNearestIsCamera() {
   return (nearestCount > 0 &&
           selectedNearest >= 0 &&
           selectedNearest < nearestCount &&
-          nearestIndices[selectedNearest] >= 0);
+          nearestCameras[selectedNearest].id[0] != '\0');
 }
 
 bool selectedNearestIsGallery() {
@@ -150,22 +201,22 @@ bool selectedCaptureIsBack() {
   return (selectedCapture == captureCount);
 }
 
-int activeCameraIndex() {
+Camera* getActiveCamera() {
   if (appMode == MODE_NEAREST) {
     if (selectedNearestIsCamera()) {
-      return nearestIndices[selectedNearest];
+      return &nearestCameras[selectedNearest];
     }
-    return -1;
+    return nullptr;
   }
 
   if (appMode == MODE_CAPTURES) {
     if (selectedCaptureIsEntry()) {
-      return captures[selectedCapture].cameraIndex;
+      return &captures[selectedCapture].cam;
     }
-    return -1;
+    return nullptr;
   }
 
-  return -1;
+  return nullptr;
 }
 
 // ---------- Distance ----------
@@ -174,39 +225,77 @@ float haversine(float lat1, float lon1, float lat2, float lon2) {
   float dLat = (lat2 - lat1) * PI / 180.0f;
   float dLon = (lon2 - lon1) * PI / 180.0f;
 
-  float a = sin(dLat / 2) * sin(dLat / 2) +
+  float a = sin(dLat / 2.0f) * sin(dLat / 2.0f) +
             cos(lat1 * PI / 180.0f) * cos(lat2 * PI / 180.0f) *
-            sin(dLon / 2) * sin(dLon / 2);
+            sin(dLon / 2.0f) * sin(dLon / 2.0f);
 
   return R * 2.0f * atan2(sqrt(a), sqrt(1.0f - a));
 }
 
-// ---------- Find nearest ----------
-void computeNearest() {
-  for (int i = 0; i < MAX_NEAREST; i++) {
-    nearestDistances[i] = 99999999.0f;
-    nearestIndices[i] = -1;
+void insertNearestCamera(const char* id, const char* name, float lat, float lon, const char* imageUrl) {
+  float d = haversine(userLat, userLon, lat, lon);
+
+  for (int j = 0; j < MAX_NEAREST; j++) {
+    if (d < nearestCameras[j].distanceMeters) {
+      for (int k = MAX_NEAREST - 1; k > j; k--) {
+        nearestCameras[k] = nearestCameras[k - 1];
+      }
+
+      safeCopy(nearestCameras[j].id, sizeof(nearestCameras[j].id), id);
+      safeCopy(nearestCameras[j].name, sizeof(nearestCameras[j].name), name);
+      safeCopy(nearestCameras[j].imageUrl, sizeof(nearestCameras[j].imageUrl), imageUrl);
+      nearestCameras[j].lat = lat;
+      nearestCameras[j].lon = lon;
+      nearestCameras[j].distanceMeters = d;
+      break;
+    }
+  }
+}
+
+void recomputeCurrentNearestDistances() {
+  if (nearestCount <= 0) return;
+
+  for (int i = 0; i < nearestCount; i++) {
+    nearestCameras[i].distanceMeters =
+      haversine(userLat, userLon, nearestCameras[i].lat, nearestCameras[i].lon);
   }
 
-  for (int i = 0; i < cameraCount; i++) {
-    float d = haversine(USER_LAT, USER_LON, cameras[i].lat, cameras[i].lon);
-
-    for (int j = 0; j < MAX_NEAREST; j++) {
-      if (d < nearestDistances[j]) {
-        for (int k = MAX_NEAREST - 1; k > j; k--) {
-          nearestDistances[k] = nearestDistances[k - 1];
-          nearestIndices[k] = nearestIndices[k - 1];
-        }
-        nearestDistances[j] = d;
-        nearestIndices[j] = i;
-        break;
+  // Re-sort current nearest set by updated distance
+  for (int i = 0; i < nearestCount - 1; i++) {
+    for (int j = i + 1; j < nearestCount; j++) {
+      if (nearestCameras[j].distanceMeters < nearestCameras[i].distanceMeters) {
+        Camera tmp = nearestCameras[i];
+        nearestCameras[i] = nearestCameras[j];
+        nearestCameras[j] = tmp;
       }
     }
   }
 
+  // Keep selection in bounds
+  if (selectedNearest >= nearestCount) {
+    selectedNearest = nearestCount - 1;
+    if (selectedNearest < 0) selectedNearest = 0;
+  }
+
+  Serial.println("Recomputed distances for existing nearest list");
+  for (int i = 0; i < nearestCount; i++) {
+    Serial.print("slot ");
+    Serial.print(i);
+    Serial.print("  dist=");
+    Serial.print((int)nearestCameras[i].distanceMeters);
+    Serial.print("m  lat=");
+    Serial.print(nearestCameras[i].lat, 6);
+    Serial.print(" lon=");
+    Serial.print(nearestCameras[i].lon, 6);
+    Serial.print("  name=");
+    Serial.println(nearestCameras[i].name);
+  }
+}
+
+void finalizeNearestCount() {
   nearestCount = 0;
   for (int i = 0; i < MAX_NEAREST; i++) {
-    if (nearestIndices[i] >= 0) {
+    if (nearestCameras[i].id[0] != '\0') {
       nearestCount++;
     }
   }
@@ -220,13 +309,397 @@ void computeNearest() {
   for (int i = 0; i < nearestCount; i++) {
     Serial.print("slot ");
     Serial.print(i);
-    Serial.print(" -> camera index ");
-    Serial.print(nearestIndices[i]);
     Serial.print("  dist=");
-    Serial.print((int)nearestDistances[i]);
-    Serial.print("m  name=");
-    Serial.println(cameras[nearestIndices[i]].name);
+    Serial.print((int)nearestCameras[i].distanceMeters);
+    Serial.print("m  lat=");
+    Serial.print(nearestCameras[i].lat, 6);
+    Serial.print(" lon=");
+    Serial.print(nearestCameras[i].lon, 6);
+    Serial.print("  name=");
+    Serial.println(nearestCameras[i].name);
   }
+}
+
+bool shouldRefetchNearestList() {
+  if (!hasFetchedNearestOnce) {
+    Serial.println("Nearest list has never been fetched before -> refetch");
+    return true;
+  }
+
+  float movedMeters = haversine(lastFetchLat, lastFetchLon, userLat, userLon);
+
+  Serial.print("Distance moved since last nearest fetch: ");
+  Serial.print(movedMeters, 2);
+  Serial.println(" m");
+
+  if (movedMeters >= NEAREST_REFETCH_THRESHOLD_METERS) {
+    Serial.println("Moved enough -> refetch nearest list");
+    return true;
+  }
+
+  Serial.println("Movement below threshold -> keep current nearest list");
+  return false;
+}
+
+// ---------- Location ----------
+bool refreshLocation() {
+  // Placeholder until you wire real GPS.
+  hasLocation = true;
+
+  Serial.print("User location: ");
+  Serial.print(userLat, 6);
+  Serial.print(", ");
+  Serial.println(userLon, 6);
+
+  return hasLocation;
+}
+
+// ---------- Chunked helpers ----------
+bool readLineFromClient(WiFiSSLClient& client, String& out, unsigned long timeoutMs = 4000) {
+  out = "";
+  unsigned long start = millis();
+
+  while (millis() - start < timeoutMs) {
+    while (client.available()) {
+      char c = (char)client.read();
+      if (c == '\r') continue;
+      if (c == '\n') return true;
+      out += c;
+      start = millis();
+    }
+
+    if (!client.connected() && !client.available()) {
+      break;
+    }
+
+    delay(1);
+  }
+
+  return false;
+}
+
+void chunkedReaderBegin(ChunkedReader& r, WiFiSSLClient& client) {
+  r.client = &client;
+  r.remainingInChunk = 0;
+  r.done = false;
+}
+
+bool chunkedReaderNextChunk(ChunkedReader& r) {
+  if (r.done) return false;
+
+  String line;
+  if (!readLineFromClient(*r.client, line)) {
+    return false;
+  }
+
+  line.trim();
+  if (line.length() == 0) {
+    return chunkedReaderNextChunk(r);
+  }
+
+  int semicolon = line.indexOf(';');
+  if (semicolon >= 0) {
+    line = line.substring(0, semicolon);
+  }
+
+  int chunkSize = (int)strtol(line.c_str(), nullptr, 16);
+
+  Serial.print("Next chunk size = ");
+  Serial.println(chunkSize);
+
+  if (chunkSize <= 0) {
+    r.done = true;
+
+    while (true) {
+      String trailer;
+      if (!readLineFromClient(*r.client, trailer, 500)) break;
+      if (trailer.length() == 0) break;
+    }
+
+    return false;
+  }
+
+  r.remainingInChunk = chunkSize;
+  return true;
+}
+
+int chunkedReaderReadByte(ChunkedReader& r) {
+  if (r.done) return -1;
+
+  while (r.remainingInChunk == 0) {
+    if (!chunkedReaderNextChunk(r)) {
+      return -1;
+    }
+  }
+
+  unsigned long start = millis();
+  while (millis() - start < 4000) {
+    if (r.client->available()) {
+      int b = r.client->read();
+      r.remainingInChunk--;
+
+      if (r.remainingInChunk == 0) {
+        unsigned long crlfStart = millis();
+        int got = 0;
+        while (millis() - crlfStart < 1000 && got < 2) {
+          if (r.client->available()) {
+            r.client->read();
+            got++;
+          } else {
+            delay(1);
+          }
+        }
+      }
+
+      return b;
+    }
+
+    if (!r.client->connected() && !r.client->available()) {
+      return -1;
+    }
+
+    delay(1);
+  }
+
+  return -1;
+}
+
+// ---------- Direct camera list fetch helpers ----------
+bool skipHttpHeaders(WiFiSSLClient& client, bool& chunked, int& contentLength) {
+  chunked = false;
+  contentLength = -1;
+
+  String status = client.readStringUntil('\n');
+  status.trim();
+
+  Serial.print("Status line: ");
+  Serial.println(status);
+
+  if (!(status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.0 200"))) {
+    lastHttpCode = -20;
+    return false;
+  }
+
+  lastHttpCode = 200;
+
+  while (true) {
+    String line = client.readStringUntil('\n');
+    if (line == "\r" || line.length() == 0) {
+      break;
+    }
+
+    String lower = line;
+    lower.toLowerCase();
+
+    if (lower.startsWith("content-length:")) {
+      String value = line.substring(line.indexOf(':') + 1);
+      value.trim();
+      contentLength = value.toInt();
+    }
+
+    if (lower.startsWith("transfer-encoding:") && lower.indexOf("chunked") >= 0) {
+      chunked = true;
+    }
+  }
+
+  Serial.print("Content-Length: ");
+  Serial.println(contentLength);
+  Serial.print("Chunked: ");
+  Serial.println(chunked ? "YES" : "NO");
+
+  return true;
+}
+
+bool waitForArrayStartRaw(WiFiSSLClient& client) {
+  unsigned long start = millis();
+  while (millis() - start < 5000) {
+    while (client.available()) {
+      char c = (char)client.read();
+      if (c == '[') return true;
+    }
+    if (!client.connected()) break;
+    delay(1);
+  }
+  return false;
+}
+
+bool waitForArrayStartChunked(ChunkedReader& reader) {
+  unsigned long start = millis();
+  while (millis() - start < 5000) {
+    int b = chunkedReaderReadByte(reader);
+    if (b < 0) break;
+    if ((char)b == '[') return true;
+  }
+  return false;
+}
+
+bool fetchNearestCamerasDirect() {
+  if (!wifiConnected || !hasLocation) {
+    Serial.println("fetchNearestCamerasDirect: no WiFi or no location");
+    lastHttpCode = -21;
+    return false;
+  }
+
+  clearNearestList();
+
+  WiFiSSLClient client;
+  Serial.println();
+  Serial.println("---- fetchNearestCamerasDirect ----");
+  logWifiStatus("Before list fetch:");
+
+  if (!client.connect(API_HOST, API_PORT)) {
+    Serial.println("SSL connect failed for camera list");
+    lastHttpCode = -22;
+    return false;
+  }
+
+  client.print("GET ");
+  client.print(CAMERA_LIST_PATH);
+  client.println(" HTTP/1.1");
+  client.print("Host: ");
+  client.println(API_HOST);
+  client.println("Connection: close");
+  client.println();
+
+  bool chunked = false;
+  int contentLength = -1;
+  if (!skipHttpHeaders(client, chunked, contentLength)) {
+    client.stop();
+    return false;
+  }
+
+  bool arrayFound = false;
+  ChunkedReader chunkReader;
+
+  if (chunked) {
+    chunkedReaderBegin(chunkReader, client);
+    arrayFound = waitForArrayStartChunked(chunkReader);
+  } else {
+    arrayFound = waitForArrayStartRaw(client);
+  }
+
+  if (!arrayFound) {
+    Serial.println("Could not find JSON array start");
+    client.stop();
+    lastHttpCode = -23;
+    return false;
+  }
+
+  String objBuf = "";
+  bool inObject = false;
+  bool inString = false;
+  bool escape = false;
+  int braceDepth = 0;
+  int parsedCount = 0;
+  unsigned long lastDataMs = millis();
+
+  while (true) {
+    int b = -1;
+
+    if (chunked) {
+      b = chunkedReaderReadByte(chunkReader);
+    } else {
+      while (!client.available()) {
+        if (!client.connected()) break;
+        if (millis() - lastDataMs > 4000) break;
+        delay(1);
+      }
+      if (client.available()) {
+        b = client.read();
+      }
+    }
+
+    if (b < 0) {
+      break;
+    }
+
+    lastDataMs = millis();
+    char c = (char)b;
+
+    if (!inObject) {
+      if (c == '{') {
+        inObject = true;
+        braceDepth = 1;
+        inString = false;
+        escape = false;
+        objBuf = "{";
+      } else if (c == ']') {
+        finalizeNearestCount();
+        client.stop();
+
+        if (nearestCount > 0) {
+          lastFetchLat = userLat;
+          lastFetchLon = userLon;
+          hasFetchedNearestOnce = true;
+          return true;
+        }
+
+        return false;
+      }
+      continue;
+    }
+
+    objBuf += c;
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (c == '\\' && inString) {
+      escape = true;
+      continue;
+    }
+
+    if (c == '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (c == '{') braceDepth++;
+      if (c == '}') braceDepth--;
+
+      if (braceDepth == 0) {
+        StaticJsonDocument<512> camDoc;
+        DeserializationError err = deserializeJson(camDoc, objBuf);
+
+        if (!err) {
+          const char* id = camDoc["id"];
+          const char* name = camDoc["name"];
+          float lat = camDoc["latitude"] | 0.0f;
+          float lon = camDoc["longitude"] | 0.0f;
+          const char* imageUrl = camDoc["imageUrl"];
+
+          if (id && name && imageUrl) {
+            insertNearestCamera(id, name, lat, lon, imageUrl);
+            parsedCount++;
+          }
+        } else {
+          Serial.print("Camera object parse error: ");
+          Serial.println(err.c_str());
+        }
+
+        inObject = false;
+        objBuf = "";
+      }
+    }
+  }
+
+  Serial.print("Parsed camera objects: ");
+  Serial.println(parsedCount);
+
+  finalizeNearestCount();
+  client.stop();
+
+  if (nearestCount > 0) {
+    lastFetchLat = userLat;
+    lastFetchLon = userLon;
+    hasFetchedNearestOnce = true;
+    return true;
+  }
+
+  return false;
 }
 
 // ---------- UI ----------
@@ -254,30 +727,6 @@ void drawTopBar(
   tft.setCursor(SCREEN_W - w - 16, 8);
   tft.setTextColor(captureColor, ST77XX_BLACK);
   tft.print("CAPTURE");
-}
-
-void flashNextLabel() {
-  drawTopBar(ST77XX_GREEN, ST77XX_WHITE, ST77XX_WHITE);
-  drawBottomUIBar();
-  delay(90);
-  drawTopBar();
-  drawBottomUIBar();
-}
-
-void flashRefreshLabel() {
-  drawTopBar(ST77XX_WHITE, ST77XX_GREEN, ST77XX_WHITE);
-  drawBottomUIBar();
-  delay(90);
-  drawTopBar();
-  drawBottomUIBar();
-}
-
-void flashCaptureLabel() {
-  drawTopBar(ST77XX_WHITE, ST77XX_WHITE, ST77XX_GREEN);
-  drawBottomUIBar();
-  delay(90);
-  drawTopBar();
-  drawBottomUIBar();
 }
 
 void drawBatteryIndicator(int x, int y, int levelPercent) {
@@ -326,6 +775,30 @@ void drawAllBars() {
   drawBottomUIBar();
 }
 
+void flashNextLabel() {
+  drawTopBar(ST77XX_GREEN, ST77XX_WHITE, ST77XX_WHITE);
+  drawBottomUIBar();
+  delay(90);
+  drawTopBar();
+  drawBottomUIBar();
+}
+
+void flashRefreshLabel() {
+  drawTopBar(ST77XX_WHITE, ST77XX_GREEN, ST77XX_WHITE);
+  drawBottomUIBar();
+  delay(90);
+  drawTopBar();
+  drawBottomUIBar();
+}
+
+void flashCaptureLabel() {
+  drawTopBar(ST77XX_WHITE, ST77XX_WHITE, ST77XX_GREEN);
+  drawBottomUIBar();
+  delay(90);
+  drawTopBar();
+  drawBottomUIBar();
+}
+
 void printName20(const char* s) {
   for (int i = 0; i < 20 && s[i] != '\0'; i++) {
     tft.print(s[i]);
@@ -339,13 +812,34 @@ void drawText() {
 
   if (appMode == MODE_NEAREST) {
     if (selectedNearestIsCamera()) {
-      const Camera& cam = cameras[nearestIndices[selectedNearest]];
+      const Camera& cam = nearestCameras[selectedNearest];
       tft.setCursor(INFO_X, TITLE_Y);
       printName20(cam.name);
 
+      tft.setTextSize(2);
       tft.setCursor(INFO_X, DIST_Y);
-      tft.print((int)nearestDistances[selectedNearest]);
+      tft.print((int)cam.distanceMeters);
       tft.print(" m");
+
+      char gpsBuf[36];
+      snprintf(gpsBuf, sizeof(gpsBuf), "U %.4f,%.4f", userLat, userLon);
+
+      tft.setTextSize(1);
+      int16_t x1, y1;
+      uint16_t w, h;
+      tft.getTextBounds(gpsBuf, 0, 0, &x1, &y1, &w, &h);
+
+      int gpsX = INFO_X + INFO_W - w;
+      if (gpsX < 120) gpsX = 120;
+
+      tft.setCursor(gpsX, DIST_Y + 6);
+      tft.print(gpsBuf);
+
+      tft.setCursor(INFO_X, DIST_Y + 20);
+      tft.print("C ");
+      tft.print(cam.lat, 5);
+      tft.print(", ");
+      tft.print(cam.lon, 5);
       return;
     }
 
@@ -372,7 +866,7 @@ void drawText() {
     }
 
     if (selectedCaptureIsEntry()) {
-      const Camera& cam = cameras[captures[selectedCapture].cameraIndex];
+      const Camera& cam = captures[selectedCapture].cam;
       tft.setCursor(INFO_X, TITLE_Y);
       printName20(cam.name);
 
@@ -438,28 +932,25 @@ void saveCurrentCapture() {
     return;
   }
 
-  int camIndex = nearestIndices[selectedNearest];
-
   if (captureCount < MAX_CAPTURES) {
-    captures[captureCount].cameraIndex = camIndex;
+    captures[captureCount].cam = nearestCameras[selectedNearest];
     captures[captureCount].capturedAtMs = millis();
     captureCount++;
   } else {
     for (int i = 0; i < MAX_CAPTURES - 1; i++) {
       captures[i] = captures[i + 1];
     }
-    captures[MAX_CAPTURES - 1].cameraIndex = camIndex;
+    captures[MAX_CAPTURES - 1].cam = nearestCameras[selectedNearest];
     captures[MAX_CAPTURES - 1].capturedAtMs = millis();
-    captureCount = MAX_CAPTURES;
   }
 
-  Serial.print("Saved capture for camera index ");
-  Serial.print(camIndex);
-  Serial.print("  captureCount=");
+  Serial.print("Saved capture: ");
+  Serial.println(nearestCameras[selectedNearest].name);
+  Serial.print("captureCount = ");
   Serial.println(captureCount);
 }
 
-// ---------- Network helpers ----------
+// ---------- Network helpers for JPEG ----------
 bool openJPEGStream(const String& path) {
   netFile.client.stop();
   netFile.streamPos = 0;
@@ -472,7 +963,7 @@ bool openJPEGStream(const String& path) {
   Serial.println("---- openJPEGStream ----");
   logWifiStatus("Before connect:");
   Serial.print("Host: ");
-  Serial.println("webcams.nyctmc.org");
+  Serial.println(API_HOST);
   Serial.print("Path: ");
   Serial.println(path);
 
@@ -482,7 +973,7 @@ bool openJPEGStream(const String& path) {
     return false;
   }
 
-  if (!netFile.client.connect("webcams.nyctmc.org", 443)) {
+  if (!netFile.client.connect(API_HOST, 443)) {
     Serial.println("SSL connect failed");
     lastHttpCode = -1;
     return false;
@@ -491,7 +982,8 @@ bool openJPEGStream(const String& path) {
   Serial.println("SSL connected, sending HTTP request");
 
   netFile.client.print("GET " + path + " HTTP/1.1\r\n");
-  netFile.client.println("Host: webcams.nyctmc.org");
+  netFile.client.print("Host: ");
+  netFile.client.println(API_HOST);
   netFile.client.println("Connection: close");
   netFile.client.println();
 
@@ -514,9 +1006,6 @@ bool openJPEGStream(const String& path) {
     if (line == "\r" || line.length() == 0) {
       break;
     }
-
-    Serial.print("HDR: ");
-    Serial.println(line);
 
     String lower = line;
     lower.toLowerCase();
@@ -562,22 +1051,20 @@ bool skipToPosition(int32_t target) {
 
 // ---------- JPEG CALLBACKS ----------
 void* jpegOpen(const char*, int32_t* size) {
-  int camIndex = activeCameraIndex();
-  if (camIndex < 0 || camIndex >= cameraCount) {
-    Serial.println("jpegOpen: invalid active camera");
+  Camera* cam = getActiveCamera();
+  if (!cam) {
+    Serial.println("jpegOpen: no active camera");
     return nullptr;
   }
 
-  const Camera& cam = cameras[camIndex];
-
   String path = "/api/cameras/";
-  path += cam.id;
+  path += cam->id;
   path += "/image";
 
   Serial.print("jpegOpen active camera id = ");
-  Serial.println(cam.id);
+  Serial.println(cam->id);
   Serial.print("camera name = ");
-  Serial.println(cam.name);
+  Serial.println(cam->name);
 
   if (!openJPEGStream(path)) {
     Serial.print("jpegOpen failed, lastHttpCode = ");
@@ -691,20 +1178,18 @@ int jpegDraw(JPEGDRAW* d) {
 }
 
 void drawImage() {
-  int camIndex = activeCameraIndex();
-  if (camIndex < 0 || camIndex >= cameraCount) {
-    Serial.println("drawImage: invalid active camera");
+  Camera* cam = getActiveCamera();
+  if (!cam) {
+    Serial.println("drawImage: no active camera");
     return;
   }
-
-  const Camera& cam = cameras[camIndex];
 
   Serial.println();
   Serial.println("==== drawImage ====");
   Serial.print("active camera id = ");
-  Serial.println(cam.id);
+  Serial.println(cam->id);
   Serial.print("camera name = ");
-  Serial.println(cam.name);
+  Serial.println(cam->name);
   logWifiStatus("drawImage:");
 
   isLoading = true;
@@ -802,6 +1287,7 @@ void readEncoder() {
   if (clk != lastCLK && clk == LOW) {
     if (appMode == MODE_NEAREST) {
       int totalItems = nearestCount + 1; // +1 for GALLERY
+      if (totalItems <= 0) totalItems = 1;
 
       if (digitalRead(ENC_DT) != clk) {
         selectedNearest = (selectedNearest + 1) % totalItems;
@@ -826,6 +1312,7 @@ void readEncoder() {
 
     else if (appMode == MODE_CAPTURES) {
       int totalItems = captureCount + 1; // +1 for BACK
+      if (totalItems <= 0) totalItems = 1;
 
       if (digitalRead(ENC_DT) != clk) {
         selectedCapture = (selectedCapture + 1) % totalItems;
@@ -852,6 +1339,56 @@ void readEncoder() {
   lastCLK = clk;
 }
 
+void refreshNearestModeDataAndImage() {
+  flashRefreshLabel();
+  drawLoadingOverlay();
+
+  if (!refreshLocation()) {
+    drawAllBars();
+    drawText();
+    drawImageMessage("NO GPS");
+    return;
+  }
+
+  bool needRefetch = shouldRefetchNearestList();
+
+  if (needRefetch) {
+    Serial.println("Refreshing nearest camera list from API...");
+
+    if (!fetchNearestCamerasDirect()) {
+      drawAllBars();
+      drawText();
+      drawImageMessage("FETCH FAILED", "Try refresh again", ST77XX_RED);
+      return;
+    }
+
+    selectedNearest = 0;
+    drawAllBars();
+    drawText();
+
+    if (selectedNearestIsCamera()) {
+      delay(10);
+      drawImage();
+    } else {
+      drawImageMessage("GALLERY");
+    }
+    return;
+  }
+
+  Serial.println("Keeping existing nearest list; refreshing current image only");
+  recomputeCurrentNearestDistances();
+
+  drawAllBars();
+  drawText();
+
+  if (selectedNearestIsCamera()) {
+    delay(10);
+    drawImage();
+  } else {
+    drawImageMessage("GALLERY");
+  }
+}
+
 void readEncoderButton() {
   int sw = digitalRead(ENC_SW);
   unsigned long now = millis();
@@ -875,11 +1412,8 @@ void readEncoderButton() {
           drawImageMessage("CAPTURES", "No captures yet");
         }
       } else if (selectedNearestIsCamera()) {
-        Serial.println("Refresh camera");
-        flashRefreshLabel();
-        drawLoadingOverlay();
-        delay(10);
-        drawImage();
+        Serial.println("Refresh current view");
+        refreshNearestModeDataAndImage();
       }
     }
 
@@ -899,7 +1433,7 @@ void readEncoderButton() {
           drawImageMessage("GALLERY");
         }
       } else if (selectedCaptureIsEntry()) {
-        Serial.println("Refresh capture entry");
+        Serial.println("Refresh capture entry image");
         flashRefreshLabel();
         drawLoadingOverlay();
         delay(10);
@@ -958,7 +1492,7 @@ void setup() {
   tft.setTextWrap(false);
   tft.fillScreen(ST77XX_BLACK);
 
-  computeNearest();
+  clearNearestList();
 
   Serial.print("Connecting to WiFi SSID: ");
   Serial.println(ssid);
@@ -975,12 +1509,18 @@ void setup() {
   logWifiStatus("After WiFi.begin:");
 
   drawAllBars();
+
+  if (wifiConnected) {
+    refreshLocation();
+    fetchNearestCamerasDirect();
+  }
+
   drawText();
 
   if (selectedNearestIsCamera()) {
     drawImage();
   } else {
-    drawImageMessage("GALLERY");
+    drawImageMessage("NO CAMERAS", "Press refresh");
   }
 
   lastCLK = digitalRead(ENC_CLK);
