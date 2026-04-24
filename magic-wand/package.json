@@ -2,10 +2,14 @@
   "name": "wk2",
   "version": "1.0.0",
   "description": "This repository contains a Week 1 response for the Connected Devices class.",
-  "main": "server.js",
+  "main": "server-udp.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node server-udp.js",
+    "start:udp": "node server-udp.js",
+    "start:mouse": "node server-mouse.js",
+    "start:mqtt": "node server-mqtt.js",
+    "start:ble": "node server-ble.js"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +23,7 @@
     "firebase-admin": "^13.7.0",
     "mqtt": "^5.15.0",
     "node-hue-api": "^5.0.0-beta.16",
+    "robotjs": "^0.6.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3"
   }
