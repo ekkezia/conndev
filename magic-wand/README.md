@@ -1,15 +1,11 @@
-# Connected Devices — Week 1 Response
-
-This repository contains a Week 1 response for the Connected Devices class.
+# Magic Wand
 
 Overview
 - Arduino reads Nano 33 IoT's internal IMU and LSM303D magnetometer sensor
 - The Arduino code sends sensor values as message over WiFi using a MQTT connection. 
-- Sensor on A0 drives the X position of the spotlight; sensor on A1 drives the Y position of the spotlight.
-- Clicking the canvas toggles between showing the camera feed and loading a random Wikipedia entry.
 
 Usage
-1. Open [magic_wand_v3.5](magic_wand_3.5) in the Arduino IDE, edit `arduino_secrets.h` with your network credentials, and upload to your board.
+1. Open [magic_wand_v3.5](magic_wand_udp) in the Arduino IDE, edit `arduino_secrets.h` with your network credentials, and upload to your board.
 2. Go to [dashboard](dashboard), install `npm install` and run `npm start`
 3. Running the server:
 a. Deployed:
