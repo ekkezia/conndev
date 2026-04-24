@@ -76,3 +76,16 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+:where(button, [role='button'], a[href], .cursor-pointer, [data-clickable='true']):not(.pointer-events-none) {
+  transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+}
+
+:where(button, [role='button'], a[href], .cursor-pointer, [data-clickable='true']):not(.pointer-events-none):hover,
+.imu-hover-target {
+  transform: translateY(-1px) scale(1.02);
+  filter: brightness(1.08);
+  box-shadow:
+    0 0 0 1px rgba(255, 241, 221, 0.45),
+    0 8px 20px rgba(0, 0, 0, 0.35);
+}

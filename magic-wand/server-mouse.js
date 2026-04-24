@@ -85,6 +85,53 @@ function setMouseOverrideEnabled(enabled, reason = 'unknown') {
   }
 }
 
+function canControlRealMouse() {
+  return Boolean(robot && mouseControlEnabled && (mouseEnabled || drawState === 'start'));
+}
+
+function parseDrawValue(raw) {
+  if (raw == null) return null;
+
+  if (typeof raw === 'object') {
+    if ('draw' in raw) return parseDrawValue(raw.draw);
+    if ('state' in raw) return parseDrawValue(raw.state);
+    if ('value' in raw) return parseDrawValue(raw.value);
+    return null;
+  }
+
+  if (typeof raw === 'boolean') return raw ? 'start' : 'stop';
+  if (typeof raw === 'number') return raw === 0 ? 'stop' : 'start';
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+
+    // Accept JSON payloads like "\"start\"" or {"draw":"start"}.
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed !== raw) {
+        const nested = parseDrawValue(parsed);
+        if (nested) return nested;
+      }
+    } catch {
+      // not JSON; continue with plain-string handling
+    }
+
+    const normalized = trimmed
+      .replace(/^['"]+|['"]+$/g, '')
+      .trim()
+      .toLowerCase();
+
+    if (['start', 'on', 'true', '1', 'down'].includes(normalized)) {
+      return 'start';
+    }
+    if (['stop', 'off', 'false', '0', 'up'].includes(normalized)) {
+      return 'stop';
+    }
+  }
+
+  return null;
+}
+
 // ===============================
 // Firebase Session Tracking
 // ===============================
@@ -190,6 +237,18 @@ async function endSession() {
 // Client-reported screen + cursor state
 // ===============================
 const DEAD_ZONE = 1.2;
+const MOUSE_LERP_ALPHA = Math.min(
+  Math.max(Number(process.env.MOUSE_LERP_ALPHA) || 0.22, 0.01),
+  1,
+);
+const MOUSE_LERP_INTERVAL_MS = Math.max(
+  4,
+  Number(process.env.MOUSE_LERP_INTERVAL_MS) || 16,
+);
+const MOUSE_LERP_SNAP_DISTANCE = Math.max(
+  0,
+  Number(process.env.MOUSE_LERP_SNAP_DISTANCE) || 0.35,
+);
 let clientScreenSize = { width: 1920, height: 1080 };
 let targetX = null;
 let targetY = null;
@@ -213,6 +272,44 @@ let distZ = 0;
 function getAxisValue(data, axis, invert) {
   const raw = data[axis] ?? 0;
   return Math.abs(raw) < WAND_CONFIG.deadZone ? 0 : invert ? -raw : raw;
+}
+
+function mapClientToLocalMousePosition(clientX, clientY) {
+  const screenW = Math.max(clientScreenSize?.width ?? 1, 1);
+  const screenH = Math.max(clientScreenSize?.height ?? 1, 1);
+  const localScreenW = localMouseScreenSize?.width ?? screenW;
+  const localScreenH = localMouseScreenSize?.height ?? screenH;
+  const mappedX = Math.round(
+    (clientX / Math.max(screenW - 1, 1)) * Math.max(localScreenW - 1, 0),
+  );
+  const mappedY = Math.round(
+    (clientY / Math.max(screenH - 1, 1)) * Math.max(localScreenH - 1, 0),
+  );
+  return { mappedX, mappedY };
+}
+
+function stepLerpedMouse() {
+  if (targetX === null || targetY === null) return;
+
+  if (lerpX === null || lerpY === null) {
+    lerpX = targetX;
+    lerpY = targetY;
+  }
+
+  lerpX += (targetX - lerpX) * MOUSE_LERP_ALPHA;
+  lerpY += (targetY - lerpY) * MOUSE_LERP_ALPHA;
+
+  if (Math.abs(targetX - lerpX) <= MOUSE_LERP_SNAP_DISTANCE) lerpX = targetX;
+  if (Math.abs(targetY - lerpY) <= MOUSE_LERP_SNAP_DISTANCE) lerpY = targetY;
+
+  if (!canControlRealMouse()) return;
+
+  try {
+    const { mappedX, mappedY } = mapClientToLocalMousePosition(lerpX, lerpY);
+    robot.moveMouse(mappedX, mappedY);
+  } catch (err) {
+    console.error('robotjs moveMouse error:', err.message);
+  }
 }
 
 function processSensorData(parsed, source = 'udp') {
@@ -245,22 +342,7 @@ function processSensorData(parsed, source = 'udp') {
   distZ += Math.abs(moveY);
 
   io.emit('sensor-processed-mouse-pos', { x: targetX, y: targetY });
-
-  if (mouseEnabled && mouseControlEnabled && robot) {
-    try {
-      const localScreenW = localMouseScreenSize?.width ?? screenW;
-      const localScreenH = localMouseScreenSize?.height ?? screenH;
-      const mappedX = Math.round(
-        (targetX / Math.max(screenW - 1, 1)) * Math.max(localScreenW - 1, 0),
-      );
-      const mappedY = Math.round(
-        (targetY / Math.max(screenH - 1, 1)) * Math.max(localScreenH - 1, 0),
-      );
-      robot.moveMouse(mappedX, mappedY);
-    } catch (err) {
-      console.error('robotjs moveMouse error:', err.message);
-    }
-  }
+  stepLerpedMouse();
 
   return {
     sensor: {
@@ -316,6 +398,7 @@ const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 lerpIo = io;
+setInterval(stepLerpedMouse, MOUSE_LERP_INTERVAL_MS);
 
 // ===============================
 // UDP SERVER
@@ -450,9 +533,11 @@ udpServer.on('message', async (msg, rinfo) => {
   // --- CONTROL ---
   if (packetPath === 'kezia/imu/draw') {
     try {
-      const value = (
-        typeof packetData === 'string' ? packetData.trim() : String(packetData)
-      ).toLowerCase();
+      const value = parseDrawValue(packetData);
+      if (!value) {
+        console.warn('⚠️ Ignoring unknown draw payload:', packetData);
+        return;
+      }
       drawState = value;
       io.emit('sensor-draw', { draw: value, timestamp: Date.now() });
       if (value === 'start') setMouseOverrideEnabled(true, 'draw-start');
@@ -468,7 +553,7 @@ udpServer.on('message', async (msg, rinfo) => {
   if (packetPath === 'kezia/imu/click') {
     try {
       io.emit('sensor-click', { timestamp: Date.now() });
-      if (mouseEnabled && mouseControlEnabled && robot) {
+      if (canControlRealMouse()) {
         robot.mouseClick();
         console.log('🖱 Click relayed + real mouse click');
       } else {

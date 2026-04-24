@@ -16,6 +16,8 @@ export function IMUProvider({ children }) {
   const [showDotmap, setShowDotmap] = useState(false);
   const [mousePos, setMousePos] = useState(null); // { x, y } in screen coords from server
   const mousePosRef = useRef(null); // always-current mousePos for use in socket closures
+  const mouseClientPosRef = useRef(null); // { x, y } in viewport coords for DOM hit-testing
+  const hoverTargetRef = useRef(null);
   const [clear, setClear] = useState(false);
   const [drawState, setDrawState] = useState({ draw: false, timestamp: null });
   const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
@@ -43,6 +45,40 @@ export function IMUProvider({ children }) {
 
     oscillator.start();
     oscillator.stop(ctx.currentTime + 0.1);
+  }, []);
+
+  const toClientPoint = useCallback((screenPos) => {
+    if (!screenPos) return null;
+    const screenW = Math.max(window.screen.width || window.innerWidth || 1, 1);
+    const screenH = Math.max(window.screen.height || window.innerHeight || 1, 1);
+    return {
+      x: Math.max(
+        0,
+        Math.min(window.innerWidth - 1, (screenPos.x / screenW) * window.innerWidth),
+      ),
+      y: Math.max(
+        0,
+        Math.min(window.innerHeight - 1, (screenPos.y / screenH) * window.innerHeight),
+      ),
+    };
+  }, []);
+
+  const getInteractiveTarget = useCallback((clientPos) => {
+    if (!clientPos) return null;
+    const el = document.elementFromPoint(clientPos.x, clientPos.y);
+    if (!el) return null;
+    return (
+      el.closest('button, [role="button"], a[href], .cursor-pointer, [data-clickable="true"]') ||
+      el
+    );
+  }, []);
+
+  const setHoverTarget = useCallback((nextTarget) => {
+    const prevTarget = hoverTargetRef.current;
+    if (prevTarget === nextTarget) return;
+    if (prevTarget?.classList) prevTarget.classList.remove('imu-hover-target');
+    hoverTargetRef.current = nextTarget;
+    if (nextTarget?.classList) nextTarget.classList.add('imu-hover-target');
   }, []);
 
   // Always-fresh data for the selected session — derived by looking up sessions[] by ID
@@ -148,6 +184,9 @@ export function IMUProvider({ children }) {
     socket.current.on('sensor-processed-mouse-pos', (pos) => {
       setMousePos(pos);
       mousePosRef.current = pos;
+      const clientPos = toClientPoint(pos);
+      mouseClientPosRef.current = clientPos;
+      setHoverTarget(getInteractiveTarget(clientPos));
     });
 
     socket.current.on('sensor-click', () => {
@@ -160,19 +199,33 @@ export function IMUProvider({ children }) {
       playClickTone();
 
       // 3. trigger browser click at last known mouse position
-      const currentMousePos = mousePosRef.current;
-      if (currentMousePos) {
-        const el = document.elementFromPoint(currentMousePos.x, currentMousePos.y);
-        if (el) {
-          el.dispatchEvent(
-            new MouseEvent('click', {
-              bubbles: true,
-              cancelable: true,
-              clientX: currentMousePos.x,
-              clientY: currentMousePos.y,
-            })
-          );
-        }
+      const clientPos = mouseClientPosRef.current || toClientPoint(mousePosRef.current);
+      const target = getInteractiveTarget(clientPos);
+      if (target && clientPos) {
+        target.dispatchEvent(
+          new MouseEvent('mousedown', {
+            bubbles: true,
+            cancelable: true,
+            clientX: clientPos.x,
+            clientY: clientPos.y,
+          })
+        );
+        target.dispatchEvent(
+          new MouseEvent('mouseup', {
+            bubbles: true,
+            cancelable: true,
+            clientX: clientPos.x,
+            clientY: clientPos.y,
+          })
+        );
+        target.dispatchEvent(
+          new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            clientX: clientPos.x,
+            clientY: clientPos.y,
+          })
+        );
       }
 
       // Optional: also emit a global custom event
@@ -182,8 +235,9 @@ export function IMUProvider({ children }) {
     return () => {
       socket.current.disconnect();
       window.removeEventListener('mousemove', onMouseMove);
+      setHoverTarget(null);
     };
-  }, []);
+  }, [playClickTone, toClientPoint, getInteractiveTarget, setHoverTarget]);
 
   const value = {
     mouseEnabled,

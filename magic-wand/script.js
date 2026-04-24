@@ -135,6 +135,21 @@ function generateDivContent(url) {
 // This is the command that actually starts the script:
 window.addEventListener('DOMContentLoaded', setup);
 
+window.addEventListener('click', (e) => {
+  console.log('click at', e.clientX, e.clientY);
+  const ripple = document.createElement('div');
+  ripple.className = 'ripple';
+  const size = 60;
+  ripple.style.width  = size + 'px';
+  ripple.style.height = size + 'px';
+  ripple.style.left   = e.clientX + 'px';
+  ripple.style.top    = e.clientY + 'px';
+  ripple.style.border = '2px solid rgba(255, 255, 255, 0.9)';
+  ripple.style.boxShadow = '0 0 8px rgba(255,255,255,0.6)';
+  document.body.appendChild(ripple);
+  ripple.addEventListener('animationend', () => ripple.remove());
+});
+
 // UTILS
 function map(value, in_min, in_max, out_min, out_max) {
   return (value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
