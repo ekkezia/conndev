@@ -15,8 +15,8 @@ Usage
 a. Deployed:
    - Create `env` and specify `SERVER_URL` with your server url. Mine is deployed on Render (contact me for details).
 b. Local:
-   -  Run locally with `node server_relay.js`
-   -  A version that enables mouse control is available by running `node mouse.js`. Install `robotjs` before using this. Mind that this version cannot be deployed to production because you can only control your mouse locally.
+   -  Run UDP relay with `node server-udp.js` (or `npm run start:udp`)
+   -  Run real local mouse override with `node server-mouse.js` (or `npm run start:mouse`). Install `robotjs` first. This is local-only and not suitable for remote deployment.
 
 
 Files
@@ -29,4 +29,3 @@ Future ideas
 
 Notes
 - This project is intended as a simple proof-of-concept for reading analog sensors from an Arduino and streaming/using the values in a web UI over WiFi TCP.
-
