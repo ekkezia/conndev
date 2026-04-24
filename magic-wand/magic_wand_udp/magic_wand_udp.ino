@@ -1,148 +1,148 @@
-
-
-#include <Arduino_LSM6DS3.h>
-#include <WiFiNINA.h>
+#include <Wire.h>
+#include <MPU6050.h>          // by Electronic Cats (or jrowberg) — install via Library Manager
+#include <WiFi.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
-#include <Wire.h>
+#include <ArduinoMqttClient.h>
 #include "arduino_secrets.h"
-
-// ================= WIFI + UDP =================
 WiFiUDP udp;
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 0, 60000);
 
-// ================= UDP TARGET =================
-// Change this to the computer/server IP that will receive the packets
-IPAddress udpHost(10, 23, 10, 70);
-const unsigned int udpPort = 4210;
+IPAddress serverIp(10, 23, 10, 70);  // your computer IP
+const unsigned int serverUdpPort = 4210;
 
-// ================= DEBUG UTILS =================
-void blinkSuccess(int pin) {
-  digitalWrite(pin, HIGH); delay(200);
-  digitalWrite(pin, LOW);  delay(200);
-}
+// ================= PIN MAP (Xiao ESP32-C6) =================
+// D0  → Potentiometer wiper (analog sensitivity)
+// D1  → Draw button  (INPUT_PULLUP, active LOW)
+// D2  → Click button (INPUT_PULLUP, active LOW)
+// D3  → Optional status LED (or INT from IMU)
+// D4  → IMU SDA (I2C)
+// D5  → IMU SCL (I2C)
 
-void blinkFail(int pin) {
-  for (int i = 0; i < 5; i++) {
-    digitalWrite(pin, HIGH); delay(80);
-    digitalWrite(pin, LOW);  delay(80);
-  }
-}
+const int POT_PIN       = D0;
+const int DRAW_BTN_PIN  = D1;
+const int CLICK_BTN_PIN = D2;
+const int STATUS_LED    = D3;   // wire an LED + 330Ω to GND, or remove if unused
 
-// ================= LEDs =================
-int starLedPins[] = {2, 3, 4, 5, 6};
-const int starLedCount = 5;
+// ================= WIFI + MQTT =================
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
+WiFiUDP    ntpUDP;
+NTPClient  timeClient(ntpUDP, "pool.ntp.org", 0, 60000);
 
-// ================= DEVICE INFO =================
-String clientID = "keziaIMU_";
-const String deviceName = "kezia";
+// ================= IMU =================
+MPU6050 imu;
+float ax, ay, az, gx, gy, gz;
+
+// ================= MQTT =================
+const char broker[]        = "public.cloud.shiftr.io";
+const int  port            = 1883;
+const char topic[]         = "kezia/imu/data";
+String     clientID        = "keziaIMU_";
+const String deviceName    = "kezia";
 
 // ================= TIMING =================
-const int sendInterval = 200;
-unsigned long lastUdpSend = 0;
-unsigned long debounceDelay = 50;
-
-// ================= SENSORS =================
-float ax, ay, az, gx, gy, gz;
-int sensitivity;
+const unsigned long SEND_INTERVAL  = 200;
+const unsigned long DEBOUNCE_DELAY = 50;
+unsigned long lastMqttSend         = 0;
 
 // ================= BUTTONS =================
-const int drawBtnPin  = 11;
-int drawState = LOW, drawBtnState = HIGH, lastDrawBtnState = HIGH;
-unsigned long lastDrawBtnDebounce = 0;
+int  drawState         = LOW;
+int  drawBtnState      = HIGH, lastDrawBtnState = HIGH;
+unsigned long lastDrawDebounce = 0;
 
-const int clickBtnPin = 12;
-int clickState = LOW, clickBtnState = HIGH, lastClickBtnState = HIGH;
-unsigned long lastClickBtnDebounce = 0;
+int  clickBtnState     = HIGH, lastClickBtnState = HIGH;
+unsigned long lastClickDebounce = 0;
+
+// ================= SENSITIVITY =================
+int sensitivity = 5;
 
 // ================= NTP =================
+bool ntpBegun   = false;
 bool ntpStarted = false;
-bool ntpBegun = false;
-unsigned long lastNtpUpdate = 0;
-
-// ================= LED 4 PULSE =================
-unsigned long led4PulseStart = 0;
-bool led4Pulsing = false;
+unsigned long lastNtpAttempt = 0;
 
 // =========================================
-// UDP SEND HELPER
+// DEBUG BLINK (single LED on D3)
 // =========================================
-bool sendUdpPacket(const String& path, const String& payload) {
-  String packet = "{\"path\":\"" + path + "\",\"data\":" + payload + "}";
-
-  if (udp.beginPacket(udpHost, udpPort) != 1) {
-    Serial.println("UDP beginPacket failed");
-    return false;
-  }
-
-  udp.print(packet);
-
-  if (udp.endPacket() != 1) {
-    Serial.println("UDP endPacket failed");
-    return false;
-  }
-
-  Serial.print("UDP sent: ");
-  Serial.println(packet);
-  return true;
+void blinkSuccess() {
+  mqttClient.poll();
+  digitalWrite(STATUS_LED, HIGH); delay(200);
+  digitalWrite(STATUS_LED, LOW);  delay(200);
 }
 
+void blinkFail() {
+  for (int i = 0; i < 5; i++) {
+    mqttClient.poll();
+    digitalWrite(STATUS_LED, HIGH); delay(80);
+    digitalWrite(STATUS_LED, LOW);  delay(80);
+  }
+}
+
+void hangWithBlink(const char* label) {
+  Serial.print("COLGADO: "); Serial.println(label);
+  while (true) {
+    blinkFail();
+    delay(1000);
+  }
+}
+
+// =========================================
+// SETUP
 // =========================================
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  pinMode(clickBtnPin, INPUT_PULLUP);
-  pinMode(drawBtnPin,  INPUT_PULLUP);
-
-  for (int i = 0; i < starLedCount; i++) {
-    pinMode(starLedPins[i], OUTPUT);
-    digitalWrite(starLedPins[i], LOW);
-  }
+  pinMode(DRAW_BTN_PIN,  INPUT_PULLUP);
+  pinMode(CLICK_BTN_PIN, INPUT_PULLUP);
+  pinMode(STATUS_LED,    OUTPUT);
+  digitalWrite(STATUS_LED, LOW);
 
   // ------ TEST 0: WiFi ------
-  bool wifiOk = connectToNetworkDebug();
-  wifiOk ? blinkSuccess(starLedPins[0]) : blinkFail(starLedPins[0]);
-  if (!wifiOk) { hangWithBlink(0); return; }
+  bool wifiOk = connectToNetwork();
+  wifiOk ? blinkSuccess() : blinkFail();
+  if (!wifiOk) hangWithBlink("WiFi");
 
-  // Start UDP locally
-  udp.begin(udpPort);
-
-  byte mac[6];
+  // Build unique client ID from MAC
+  uint8_t mac[6];
   WiFi.macAddress(mac);
-  for (int i = 0; i < 3; i++) {
-    clientID += String(mac[i], HEX);
-  }
+  for (int i = 0; i < 3; i++) clientID += String(mac[i], HEX);
 
-  // ------ TEST 1: UDP send ------
-  bool udpOk = sendUdpPacket("kezia/test", "\"ok\"");
-  udpOk ? blinkSuccess(starLedPins[1]) : blinkFail(starLedPins[1]);
-  if (!udpOk) { hangWithBlink(1); return; }
+  // ------ TEST 1: MQTT ------
+  mqttClient.setId(clientID);
+  mqttClient.setUsernamePassword(SECRET_MQTT_USER, SECRET_MQTT_PASS);
+  mqttClient.setKeepAliveInterval(6000);
+
+  bool mqttOk = connectToBroker();
+  mqttOk ? blinkSuccess() : blinkFail();
+  if (!mqttOk) hangWithBlink("MQTT");
 
   // ------ TEST 2: IMU ------
-  IMU.begin();
-  delay(50);
-  bool imuOk = IMU.accelerationAvailable() || IMU.gyroscopeAvailable();
-  imuOk ? blinkSuccess(starLedPins[2]) : blinkFail(starLedPins[2]);
-  if (!imuOk) { hangWithBlink(2); return; }
+  // ESP32-C6 default I2C: SDA=D4, SCL=D5
+  Wire.begin(D4, D5);
+  imu.initialize();
 
-  // ------ TEST 4: UDP send again ------
-  digitalWrite(starLedPins[4], HIGH); delay(50);
-  digitalWrite(starLedPins[4], LOW);  delay(50);
+  bool imuOk = imu.testConnection();
+  imuOk ? blinkSuccess() : blinkFail();
+  if (!imuOk) hangWithBlink("IMU");
 
-  if (!sendUdpPacket("kezia/test", "\"setup-complete\"")) {
-    blinkFail(starLedPins[4]);
-    hangWithBlink(4);
-    return;
-  }
+  // ------ TEST 3: MQTT send test ------
+  mqttClient.poll();
+  mqttClient.beginMessage("kezia/test");
+  mqttClient.print("ok");
+  int result = mqttClient.endMessage();
 
-  blinkSuccess(starLedPins[4]);
+  result == 1 ? blinkSuccess() : blinkFail();
+  if (result != 1) hangWithBlink("MQTT send");
+
   Serial.println("Setup completo.");
 }
 
 // =========================================
+// LOOP
+// =========================================
 void loop() {
+  mqttClient.poll();
   unsigned long now = millis();
 
   // NTP: start once
@@ -151,185 +151,205 @@ void loop() {
     ntpBegun = true;
   }
 
-  // NTP: sync every 10 sec until success
-  if (!ntpStarted && now - lastNtpUpdate > 10000) {
-    lastNtpUpdate = now;
+  // MQTT: reconnect if dropped
+  if (!mqttClient.connected()) {
+    connectToBroker();
+  }
+
+  // NTP: sync every 10 s until successful
+  if (!ntpStarted && now - lastNtpAttempt > 10000) {
+    lastNtpAttempt = now;
     if (timeClient.forceUpdate()) {
       ntpStarted = true;
       Serial.println("NTP OK");
     }
   }
 
-  // ====== DRAW START/STOP ======
-  int drawBtnReading = digitalRead(drawBtnPin);
-  if (drawBtnReading != lastDrawBtnState) {
-    lastDrawBtnDebounce = millis();
-  }
+  // ====== DRAW BUTTON ======
+  int drawReading = digitalRead(DRAW_BTN_PIN);
+  if (drawReading != lastDrawBtnState) lastDrawDebounce = now;
 
-  if ((millis() - lastDrawBtnDebounce) > debounceDelay) {
-    if (drawBtnReading != drawBtnState) {
-      drawBtnState = drawBtnReading;
-      if (drawBtnState == LOW) {
+  if (now - lastDrawDebounce > DEBOUNCE_DELAY) {
+    if (drawReading != drawBtnState) {
+      drawBtnState = drawReading;
+      if (drawBtnState == LOW) {          // pressed
         drawState = !drawState;
-        animateStarLEDs();
+        animateLED();
         pulseDraw();
       }
     }
   }
-  lastDrawBtnState = drawBtnReading;
+  lastDrawBtnState = drawReading;
 
-  // ====== CLICK ======
+  // Status LED mirrors draw state
+  digitalWrite(STATUS_LED, drawState);
+
+  // ====== CLICK BUTTON (only when drawing) ======
   if (drawState) {
-    int clickBtnReading = digitalRead(clickBtnPin);
-    if (clickBtnReading != lastClickBtnState) {
-      lastClickBtnDebounce = millis();
-    }
+    int clickReading = digitalRead(CLICK_BTN_PIN);
+    if (clickReading != lastClickBtnState) lastClickDebounce = now;
 
-    if ((millis() - lastClickBtnDebounce) > debounceDelay) {
-      if (clickBtnReading != clickBtnState) {
-        clickBtnState = clickBtnReading;
-        if (clickBtnState == LOW) {
-          blinkAllStars();
+    if (now - lastClickDebounce > DEBOUNCE_DELAY) {
+      if (clickReading != clickBtnState) {
+        clickBtnState = clickReading;
+        if (clickBtnState == LOW) {       // pressed
+          blinkLED(3);
           pulseClick();
         }
       }
     }
-    lastClickBtnState = clickBtnReading;
+    lastClickBtnState = clickReading;
   }
 
-  // ====== SENSOR + UDP ======
-  if (now - lastUdpSend >= sendInterval) {
-    lastUdpSend = now;
+  // ====== SENSOR + MQTT ======
+  if (now - lastMqttSend >= SEND_INTERVAL) {
+    lastMqttSend = now;
 
-    if (IMU.accelerationAvailable()) IMU.readAcceleration(ax, ay, az);
-    if (IMU.gyroscopeAvailable())    IMU.readGyroscope(gx, gy, gz);
+    readIMU();
 
-    sensitivity = 5; // fallback default on Nano 33 IoT if no pot is connected
+    // Potentiometer: 12-bit (0–4095) → sensitivity 1–10
+    int potRaw = analogRead(POT_PIN);
+    sensitivity = map(potRaw, 0, 4095, 1, 10);
 
-    // If you actually have a potentiometer on A3 and it is wired properly,
-    // uncomment this line and comment out the one above:
-    // sensitivity = floor(map(analogRead(A3), 0, 1023, 1, 10));
-
-    bool ok = publishUdpData();
-    if (ok) {
-      digitalWrite(starLedPins[4], HIGH);
-      led4PulseStart = now;
-      led4Pulsing = true;
+    if (mqttClient.connected()) {
+      publishMqtt();
+      // Quick status flash without blocking
+      digitalWrite(STATUS_LED, HIGH);
+      static unsigned long ledOnAt = 0;
+      ledOnAt = now;
+      // Turn off after 30 ms on next loop pass
+      if (now - ledOnAt > 30) digitalWrite(STATUS_LED, drawState);
     }
   }
+}
 
-  // restore LED 4 after pulse
-  if (led4Pulsing && (now - led4PulseStart >= 30)) {
-    led4Pulsing = false;
+// =========================================
+// IMU READ
+// =========================================
+void readIMU() {
+  int16_t rawAx, rawAy, rawAz, rawGx, rawGy, rawGz;
+  imu.getMotion6(&rawAx, &rawAy, &rawAz, &rawGx, &rawGy, &rawGz);
+
+  // Convert to g (±2g range, 16384 LSB/g) and °/s (±250°/s, 131 LSB/°/s)
+  ax = rawAx / 16384.0f;
+  ay = rawAy / 16384.0f;
+  az = rawAz / 16384.0f;
+  gx = rawGx / 131.0f;
+  gy = rawGy / 131.0f;
+  gz = rawGz / 131.0f;
+}
+
+// =========================================
+// LED HELPERS
+// =========================================
+void animateLED() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(STATUS_LED, HIGH); delay(80);
+    digitalWrite(STATUS_LED, LOW);  delay(80);
   }
+}
 
-  // draw LED state
-  for (int i = 0; i < starLedCount; i++) {
-    if (i == 4 && led4Pulsing) {
-      digitalWrite(starLedPins[i], HIGH);
-    } else {
-      digitalWrite(starLedPins[i], drawState ? HIGH : LOW);
-    }
+void blinkLED(int times) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(STATUS_LED, HIGH); delay(80);
+    digitalWrite(STATUS_LED, LOW);  delay(80);
   }
 }
 
 // =========================================
 // NETWORK
 // =========================================
-bool connectToNetworkDebug() {
+bool connectToNetwork() {
   int attempts = 0;
+  WiFi.begin(SECRET_SSID, SECRET_PASS);
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     Serial.println("WiFi intentando...");
-    WiFi.begin(SECRET_SSID, SECRET_PASS);
     delay(1000);
     attempts++;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi OK");
-    Serial.print("IP local: ");
-    Serial.println(WiFi.localIP());
     return true;
   }
-
   Serial.println("WiFi FALLO");
   return false;
 }
 
-void hangWithBlink(int ledIndex) {
-  Serial.print("COLGADO en paso ");
-  Serial.println(ledIndex);
-  while (true) {
-    blinkFail(starLedPins[ledIndex]);
-    delay(1000);
+bool connectToBroker() {
+  Serial.println("Conectando a broker...");
+
+  mqttClient.beginWill("kezia/imu/power", true, 0);
+  mqttClient.print("{\"power\":false}");
+  mqttClient.endWill();
+
+  if (!mqttClient.connect(broker, port)) {
+    Serial.print("MQTT error: ");
+    Serial.println(mqttClient.connectError());
+    return false;
   }
+  Serial.println("Broker OK");
+  return true;
 }
 
 // =========================================
-// LED ANIMATIONS
-// =========================================
-void animateStarLEDs() {
-  for (int i = 0; i < starLedCount; i++) {
-    digitalWrite(starLedPins[i], HIGH); delay(80);
-    digitalWrite(starLedPins[i], LOW);
-  }
-  for (int i = starLedCount - 2; i > 0; i--) {
-    digitalWrite(starLedPins[i], HIGH); delay(80);
-    digitalWrite(starLedPins[i], LOW);
-  }
-}
-
-void blinkAllStars() {
-  for (int j = 0; j < 3; j++) {
-    for (int i = 0; i < starLedCount; i++) digitalWrite(starLedPins[i], HIGH);
-    delay(80);
-    for (int i = 0; i < starLedCount; i++) digitalWrite(starLedPins[i], LOW);
-    delay(80);
-  }
-}
-
-// =========================================
-// UDP SENDERS
+// MQTT PUBLISH
 // =========================================
 void pulseClick() {
-  sendUdpPacket("kezia/imu/click", "true");
-  Serial.println("CLICK!");
+  String msg = "{\"path\":\"kezia/imu/click\",\"data\":true}";
+
+  udp.beginPacket(serverIp, serverUdpPort);
+  udp.print(msg);
+  udp.endPacket();
+
+  Serial.println("CLICK UDP!");
 }
 
 void pulseDraw() {
-  Serial.println(drawState ? "START" : "STOP");
-  publishControl();
+  String state = drawState ? "start" : "stop";
+
+  String msg = "{\"path\":\"kezia/imu/draw\",\"data\":\"";
+  msg += state;
+  msg += "\"}";
+
+  udp.beginPacket(serverIp, serverUdpPort);
+  udp.print(msg);
+  udp.endPacket();
+
+  Serial.print("DRAW UDP: ");
+  Serial.println(state);
 }
 
-void publishControl() {
-  sendUdpPacket("kezia/imu/draw", drawState ? "\"start\"" : "\"stop\"");
-}
+// replace fn with publishMessage
+void publishMqtt() {
+  String msg = "";
 
-void publishPower(bool on) {
-  sendUdpPacket("kezia/imu/power", on ? "{\"power\":true}" : "{\"power\":false}");
-}
+  msg += "{\"path\":\"kezia/imu/data\",\"data\":";
+  msg += "{\"device\":\"";
+  msg += deviceName;
+  msg += "\",\"sensor\":{";
 
-bool publishUdpData() {
-  String payload = "{\"device\":\"" + deviceName + "\",\"sensor\":{";
-  payload += "\"ax\":" + String(ax, 6) + ",";
-  payload += "\"ay\":" + String(ay, 6) + ",";
-  payload += "\"az\":" + String(az, 6) + ",";
-  payload += "\"gx\":" + String(gx, 6) + ",";
-  payload += "\"gy\":" + String(gy, 6) + ",";
-  payload += "\"gz\":" + String(gz, 6) + ",";
-  payload += "\"sensitivity\":" + String(sensitivity) + ",";
-  payload += "\"timestamp\":";
+  msg += "\"ax\":" + String(ax, 4) + ",";
+  msg += "\"ay\":" + String(ay, 4) + ",";
+  msg += "\"az\":" + String(az, 4) + ",";
+  msg += "\"gx\":" + String(gx, 4) + ",";
+  msg += "\"gy\":" + String(gy, 4) + ",";
+  msg += "\"gz\":" + String(gz, 4) + ",";
+  msg += "\"sensitivity\":" + String(sensitivity) + ",";
+  msg += "\"timestamp\":";
 
   if (ntpStarted) {
     unsigned long long tsMs =
-      (unsigned long long)timeClient.getEpochTime() * 1000ULL +
-      (millis() % 1000);
-    payload += String((unsigned long)(tsMs & 0xFFFFFFFF));
+      (unsigned long long)timeClient.getEpochTime() * 1000ULL + (millis() % 1000);
+    msg += String((unsigned long)tsMs);
   } else {
-    payload += String(millis());
+    msg += String(millis());
   }
 
-  payload += "}}";
+  msg += "}}}";
 
-  return sendUdpPacket("kezia/imu/data", payload);
+  udp.beginPacket(serverIp, serverUdpPort);
+  udp.print(msg);
+  udp.endPacket();
+
+  Serial.println(msg);
 }

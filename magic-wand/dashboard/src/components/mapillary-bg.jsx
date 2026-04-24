@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { MAPILLARY_TOKEN } from '../config';
+import { MAPILLARY_TOKEN, MAP_START } from '../config';
 import 'mapillary-js/dist/mapillary.css';
 
-const START = { lat: 40.6925, lng: -73.9872 };
+const START = MAP_START;
 const MAX_IMAGES = 150;
 const TURN_THRESHOLD_DEG = 45;
 const STEP_INTERVAL_MS = 1500;
@@ -124,6 +124,7 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
       const w = pixelCanvas.width;
       const h = pixelCanvas.height;
       const ctx = pixelCanvas.getContext('2d');
+
       try {
         if (!pixelateRef.current) {
           ctx.drawImage(mlCanvas, 0, 0, w, h);
