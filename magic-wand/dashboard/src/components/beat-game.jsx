@@ -1,10 +1,47 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import paper from "paper";
 import { io } from "socket.io-client";
 import { useIMU } from "../contexts/IMUContext";
 import SONGS from "../config/game.json";
-import { REACT_APP_SERVER_URL } from "../config";
+import { REACT_APP_SERVER_URL, CANVAS_RATIO, SFX } from "../config";
 import MapillaryBg from "./mapillary-bg";
+
+// ─── AUDIO HELPERS ────────────────────────────────────────────────────────────
+// Uses Web Audio API so sounds can play from anywhere (not just gesture handlers).
+// AudioContext is created + resumed on first user gesture, then stays unlocked.
+let _audioCtx = null;
+const _audioBuffers = {};
+
+function getAudioCtx() {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || window['webkitAudioContext'])();
+  return _audioCtx;
+}
+
+async function preloadSfx(src) {
+  if (_audioBuffers[src]) return;
+  try {
+    const ctx = getAudioCtx();
+    const res = await fetch(src);
+    const raw = await res.arrayBuffer();
+    _audioBuffers[src] = await ctx.decodeAudioData(raw);
+  } catch {}
+}
+
+function playSfx(src, vol = 0.7) {
+  try {
+    const ctx = getAudioCtx();
+    if (ctx.state === 'suspended') ctx.resume();
+    const buf = _audioBuffers[src];
+    if (!buf) return;
+    const source = ctx.createBufferSource();
+    source.buffer = buf;
+    const gain = ctx.createGain();
+    gain.gain.value = vol;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
+  } catch {}
+}
 
 const UNIT = 25;
 const SHOW_BEFORE = 4000;
@@ -121,15 +158,215 @@ function makeApproachGroup(cx, cy, shapeType) {
   return group;
 }
 
-// ─── SONG SELECTION MODAL ─────────────────────────────────────────────────────
-function SongSelectModal({ onStart }) {
-  const [selected, setSelected] = useState(null);
+// ─── STAR TRACE (full-screen, wand-cursor driven) ────────────────────────────
+const TRAIL_PALETTE = ['#ff4fa3', '#ff9a5a', '#ffb43b', '#ff6a2d', '#d93a6a', '#ff1e7a'];
+const TRAIL_LIFETIME = 2000;
+
+function svgStarPoints(cx, cy, r1, r2, rotDeg) {
+  return Array.from({ length: 8 }, (_, i) => {
+    const angle = (rotDeg + i * 45) * Math.PI / 180;
+    const r = i % 2 === 0 ? r2 : r1;
+    return `${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`;
+  }).join(' ');
+}
+
+// Generate dots evenly spaced along the 10-segment star perimeter
+function generateStarDots(cx, cy, R, r, dotsPerSegment) {
+  const verts = Array.from({ length: 10 }, (_, i) => {
+    const angle = (-90 + i * 36) * Math.PI / 180;
+    const rad = i % 2 === 0 ? R : r;
+    return { x: cx + rad * Math.cos(angle), y: cy + rad * Math.sin(angle) };
+  });
+  const dots = [];
+  for (let seg = 0; seg < 10; seg++) {
+    const from = verts[seg], to = verts[(seg + 1) % 10];
+    for (let j = 0; j < dotsPerSegment; j++) {
+      const t = j / dotsPerSegment;
+      dots.push({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t });
+    }
+  }
+  return dots;
+}
+
+// ─── SHARED WAND CURSOR HOOK ─────────────────────────────────────────────────
+// Merges server wand cursor + mouse fallback; drives the sparkle trail.
+function useWandCursor(cursor) {
+  const [mousePos, setMousePos] = useState(null);
+  const [clickKey, setClickKey] = useState(0);
+  const [trailItems, setTrailItems] = useState([]);
+  const trailRef = useRef([]);
+  const lastTrailPosRef = useRef(null);
+  const trailFrameRef = useRef(0);
+  const cursorRef = useRef(cursor);
+
+  const activeCursor = cursor ?? mousePos;
+  useEffect(() => { cursorRef.current = activeCursor; }, [activeCursor]);
+
+  useEffect(() => {
+    let rafId;
+    function loop(now) {
+      rafId = requestAnimationFrame(loop);
+      const cur = cursorRef.current;
+      if (cur) {
+        const last = lastTrailPosRef.current;
+        const moved = last ? Math.hypot(cur.x - last.x, cur.y - last.y) : Infinity;
+        if (moved > 5) {
+          trailFrameRef.current++;
+          trailRef.current.push({
+            id: trailFrameRef.current,
+            x: cur.x, y: cur.y, spawnTime: now,
+            color: TRAIL_PALETTE[trailFrameRef.current % TRAIL_PALETTE.length],
+            r1: 12 + Math.random() * 10,
+            r2: 38 + Math.random() * 22,
+            rot: Math.random() * 360,
+          });
+          lastTrailPosRef.current = { x: cur.x, y: cur.y };
+        }
+      }
+      const alive = trailRef.current.filter(item => now - item.spawnTime < TRAIL_LIFETIME);
+      trailRef.current = alive;
+      setTrailItems(alive.map(item => ({ ...item, age: now - item.spawnTime })));
+    }
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
+
+  const onMouseMove = e => setMousePos({ x: e.clientX, y: e.clientY });
+  const triggerClick = useCallback(() => {
+    playSfx(SFX.click, 0.5);
+    setClickKey(k => k + 1);
+  }, []);
+  return { activeCursor, trailItems, onMouseMove, clickKey, triggerClick };
+}
+
+// Reusable SVG trail + cursor dot (renders into an existing SVG)
+function WandCursorSVG({ activeCursor, trailItems, clickKey = 0 }) {
+  const scaleAnimRef = useRef(null);
+  const colorAnimRef = useRef(null);
+
+  useEffect(() => {
+    if (clickKey > 0) {
+      scaleAnimRef.current?.beginElement();
+      colorAnimRef.current?.beginElement();
+    }
+  }, [clickKey]);
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/85 backdrop-blur-sm">
-      <div className="bg-cola-brown border border-cream-soda/15 rounded-2xl p-8 w-full max-w-sm flex flex-col gap-6 shadow-2xl">
+    <>
+      {trailItems.map(item => {
+        const t = item.age / TRAIL_LIFETIME;
+        return (
+          <polygon
+            key={item.id}
+            points={svgStarPoints(item.x, item.y, item.r1, item.r2, item.rot)}
+            fill={item.color}
+            opacity={Math.pow(1 - t, 1.5)}
+            transform={`scale(${1 - t * 0.85})`}
+            style={{ transformOrigin: `${item.x}px ${item.y}px` }}
+          />
+        );
+      })}
+      {activeCursor && (
+        <g transform={`translate(${activeCursor.x},${activeCursor.y})`}>
+          <circle cx={0} cy={0} r={28} fill="rgba(255,180,59,0.9)" stroke="rgba(255,241,221,0.6)" strokeWidth="3">
+            <animateTransform
+              ref={scaleAnimRef}
+              attributeName="transform" type="scale"
+              values="1;1.9;1" dur="0.35s" begin="indefinite"
+              calcMode="spline" keySplines="0.2 0 0.2 1;0.2 0 0.2 1"
+            />
+            <animate
+              ref={colorAnimRef}
+              attributeName="fill"
+              values="rgba(255,180,59,0.9);rgba(255,70,130,0.95);rgba(255,180,59,0.9)"
+              dur="0.35s" begin="indefinite"
+            />
+          </circle>
+        </g>
+      )}
+    </>
+  );
+}
+
+function StarTraceScreen({ cursor, canvasRect, onComplete }) {
+  const [hitCount, setHitCount] = useState(0);
+  const hitRef = useRef(0);
+  const doneRef = useRef(false);
+  const { activeCursor, trailItems, onMouseMove, clickKey, triggerClick } = useWandCursor(cursor);
+
+  // 50 dots total (5 per segment × 10 segments) along the star perimeter
+  // Centered inside the canvas rect, which is letterboxed within the viewport
+  const dots = useMemo(() => {
+    const rect = canvasRect ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+    const cx = rect.x + rect.width  / 2;
+    const cy = rect.y + rect.height / 2;
+    const R  = Math.min(rect.width, rect.height) * 0.32;
+    const r  = R * 0.38;
+    return generateStarDots(cx, cy, R, r, 5);
+  }, [canvasRect]);
+
+  // Hit detection: cursor must pass through dots in order
+  useEffect(() => {
+    if (!activeCursor || doneRef.current || hitRef.current >= dots.length) return;
+    const pt = dots[hitRef.current];
+    if (Math.hypot(activeCursor.x - pt.x, activeCursor.y - pt.y) < 45) {
+      hitRef.current += 1;
+      setHitCount(hitRef.current);
+      playSfx(SFX.starHit, 0.6);
+      if (hitRef.current >= dots.length) {
+        doneRef.current = true;
+        setTimeout(onComplete, 500);
+      }
+    }
+  }, [activeCursor, dots, onComplete]);
+
+  const pct = Math.round((hitCount / dots.length) * 100);
+
+  return (
+    <div className="absolute inset-0 z-50 cursor-none bg-cola-brown/85 backdrop-blur-sm" onMouseMove={onMouseMove} onClick={triggerClick}>
+      <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
+        <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} />
+        {/* star perimeter dots */}
+        {dots.map((pt, i) => {
+          const isHit = i < hitCount;
+          const isNext = i === hitCount;
+          return (
+            <circle
+              key={i}
+              cx={pt.x} cy={pt.y}
+              r={isNext ? 9 : 5}
+              fill={isHit ? '#4ade80' : isNext ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.28)'}
+            />
+          );
+        })}
+      </svg>
+      <div
+        className="absolute text-center pointer-events-none"
+        style={canvasRect
+          ? { left: canvasRect.x, width: canvasRect.width, top: canvasRect.y + canvasRect.height - 40 }
+          : { left: 0, right: 0, bottom: 40 }}
+      >
+        <p className="text-cream-soda/45 font-mono text-sm tracking-widest uppercase">
+          {hitCount === 0 ? 'trace the star to begin' : hitCount < dots.length ? `${pct}%` : 'unlocked!'}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── SONG SELECTION OVERLAY ───────────────────────────────────────────────────
+function SongSelectOverlay({ cursor, onStart }) {
+  const [selected, setSelected] = useState(null);
+  const { activeCursor, trailItems, onMouseMove, clickKey, triggerClick } = useWandCursor(cursor);
+
+  return (
+    <div className="absolute inset-0 z-50 cursor-none flex items-center justify-center bg-cola-brown/75 backdrop-blur-sm" onMouseMove={onMouseMove} onClick={triggerClick}>
+      <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
+        <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} />
+      </svg>
+      <div className="p-10 w-full max-w-lg flex flex-col gap-6">
         <div>
-          <h2 className="text-cream-soda font-mono text-xl font-bold tracking-tight">beat game</h2>
+          <h2 className="text-cream-soda font-mono text-2xl font-bold tracking-tight">beat game</h2>
           <p className="text-cream-soda/40 font-mono text-xs mt-1">select a track to play</p>
         </div>
 
@@ -178,6 +415,9 @@ export default function BeatGame({ className }) {
   const { sensorData } = useIMU();
 
   const [activeSong, setActiveSong] = useState(null);
+  const [traced, setTraced] = useState(false);
+  const [menuCursor, setMenuCursor] = useState(null);
+  const [canvasRect, setCanvasRect] = useState(null);
   const [score, setScore] = useState(0);
   const [gridVisible, setGridVisible] = useState(false);
   const [lastHitPos, setLastHitPos] = useState(null);
@@ -189,7 +429,7 @@ export default function BeatGame({ className }) {
 
   const triggerPerfect = (x, y) => {
     if (!perfectSfxRef.current) {
-      perfectSfxRef.current = new Audio('/perfect.mp3');
+      perfectSfxRef.current = new Audio(SFX.perfect);
       perfectSfxRef.current.volume = 0.7;
     }
     perfectSfxRef.current.currentTime = 0;
@@ -204,6 +444,8 @@ export default function BeatGame({ className }) {
   const gameLayerRef = useRef(null);
   const cursorLayerRef = useRef(null);
   const paperReadyRef = useRef(false);
+
+  const canvasRectRef = useRef(null);
 
   const cursorDotRef = useRef(null);
   const cursorLerpRef = useRef(null);
@@ -224,6 +466,7 @@ export default function BeatGame({ className }) {
   const trailStateTimerRef = useRef(null);
   const socketRef = useRef(null);
   const cursorBezierRef = useRef(null);
+  const cursorClickTimeRef = useRef(-Infinity);
   const cursorSmoothRef = useRef(null); // EMA-filtered sensor position
 
   // ─── SETUP PAPER + GRID ────────────────────────────────────────────────────
@@ -232,11 +475,23 @@ export default function BeatGame({ className }) {
     if (!canvas) return;
 
     paper.setup(canvas);
-    const { width, height } = canvas.getBoundingClientRect();
-    canvas.width = width;
+    const viewW = window.innerWidth;
+    const viewH = window.innerHeight;
+    const height = viewW / viewH >= CANVAS_RATIO ? viewH : viewW / CANVAS_RATIO;
+    const width  = height * CANVAS_RATIO;
+    const left   = Math.round((viewW - width)  / 2);
+    const top    = Math.round((viewH - height) / 2);
+    canvas.style.left   = left   + 'px';
+    canvas.style.top    = top    + 'px';
+    canvas.style.width  = width  + 'px';
+    canvas.style.height = height + 'px';
+    canvas.width  = width;
     canvas.height = height;
     paper.view.viewSize = new paper.Size(width, height);
     canvasSizeRef.current = { width, height };
+    const rect = { x: left, y: top, width, height };
+    setCanvasRect(rect);
+    canvasRectRef.current = rect;
     paperReadyRef.current = true;
 
     gridLayerRef.current = new paper.Layer();
@@ -263,7 +518,25 @@ export default function BeatGame({ className }) {
 
     paper.view.draw();
 
+    function onResize() {
+      const vW = window.innerWidth, vH = window.innerHeight;
+      const h = vW / vH >= CANVAS_RATIO ? vH : vW / CANVAS_RATIO;
+      const w = h * CANVAS_RATIO;
+      const l = Math.round((vW - w) / 2);
+      const t = Math.round((vH - h) / 2);
+      canvas.style.left = l + 'px'; canvas.style.top = t + 'px';
+      canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+      canvas.width = w; canvas.height = h;
+      paper.view.viewSize = new paper.Size(w, h);
+      canvasSizeRef.current = { width: w, height: h };
+      const r = { x: l, y: t, width: w, height: h };
+      setCanvasRect(r);
+      canvasRectRef.current = r;
+    }
+    window.addEventListener('resize', onResize);
+
     return () => {
+      window.removeEventListener('resize', onResize);
       if (gameRafRef.current) cancelAnimationFrame(gameRafRef.current);
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       paper.project.clear();
@@ -272,6 +545,9 @@ export default function BeatGame({ className }) {
       paperReadyRef.current = false;
     };
   }, []);
+
+  // ─── PRELOAD SFX ──────────────────────────────────────────────────────────
+  useEffect(() => { Object.values(SFX).forEach(preloadSfx); }, []);
 
   // ─── SOCKET ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -316,6 +592,7 @@ export default function BeatGame({ className }) {
         }
         socketRef.current?.emit('beat-hit', { perfect: true, x: beat.x, y: beat.y });
         triggerPerfect(beat.x, beat.y);
+        cursorClickTimeRef.current = performance.now();
         trailStateRef.current = 'hit';
         clearTimeout(trailStateTimerRef.current);
         trailStateTimerRef.current = setTimeout(() => { trailStateRef.current = 'normal'; }, 1500);
@@ -378,14 +655,25 @@ export default function BeatGame({ className }) {
         if (!cursorDotRef.current) {
           cursorDotRef.current = new paper.Path.Circle({
             center: pt,
-            radius: 16,
+            radius: 28,
             fillColor: dotColor,
             strokeColor: new paper.Color(1, 0.945, 0.867, 0.6),
-            strokeWidth: 2,
+            strokeWidth: 3,
           });
         } else {
           cursorDotRef.current.position = pt;
-          cursorDotRef.current.fillColor = dotColor;
+          const clickAge = now - cursorClickTimeRef.current;
+          if (clickAge < 350) {
+            const t = clickAge / 350;
+            const pulse = t < 0.4 ? 1 + (t / 0.4) * 0.9 : 1 + (1 - (t - 0.4) / 0.6) * 0.9;
+            cursorDotRef.current.scaling = new paper.Point(pulse, pulse);
+            cursorDotRef.current.fillColor = t < 0.5
+              ? new paper.Color(1, 0.275, 0.51, 0.95)
+              : dotColor;
+          } else {
+            cursorDotRef.current.scaling = new paper.Point(1, 1);
+            cursorDotRef.current.fillColor = dotColor;
+          }
         }
 
         // ── Trail ──
@@ -406,8 +694,8 @@ export default function BeatGame({ className }) {
           const trailPath = new paper.Path.Star({
             center: pt,
             points: 4,
-            radius1: 6 + Math.random() * 6,
-            radius2: 22 + Math.random() * 14,
+            radius1: 12 + Math.random() * 10,
+            radius2: 38 + Math.random() * 22,
             fillColor: color,
             strokeColor: null,
           });
@@ -493,6 +781,7 @@ export default function BeatGame({ className }) {
           beat.approachGroup.opacity = 0;
           socketRef.current?.emit('beat-hit', { perfect: isPerfect, x: beat.x, y: beat.y });
           if (isPerfect) triggerPerfect(beat.x, beat.y);
+          cursorClickTimeRef.current = performance.now();
           trailStateRef.current = 'hit';
           clearTimeout(trailStateTimerRef.current);
           trailStateTimerRef.current = setTimeout(() => { trailStateRef.current = 'normal'; }, 1500);
@@ -610,10 +899,40 @@ export default function BeatGame({ className }) {
     if (!cursorLerpRef.current) cursorLerpRef.current = { x: tcx, y: tcy };
   }, [sensorData]);
 
+  // ─── MENU CURSOR LOOP (bezier playback when no song is active) ────────────
+  useEffect(() => {
+    if (activeSong) return;
+    let rafId;
+    function loop() {
+      rafId = requestAnimationFrame(loop);
+      const lerp = cursorLerpRef.current;
+      const bezier = cursorBezierRef.current;
+      if (!lerp || !bezier) return;
+      if (bezier.t < 1) {
+        bezier.t = Math.min(1, bezier.t + 0.07);
+        const pos = evalBezier(bezier, bezier.t);
+        bezier.vel = { x: pos.x - lerp.x, y: pos.y - lerp.y };
+        lerp.x = pos.x;
+        lerp.y = pos.y;
+      }
+      const off = canvasRectRef.current;
+      setMenuCursor({ x: lerp.x + (off?.x ?? 0), y: lerp.y + (off?.y ?? 0) });
+    }
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, [activeSong]);
+
   return (
     <div className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}>
-      <MapillaryBg className="z-0" lastHitPos={lastHitPos} active={!!activeSong} onReady={() => setMapReady(true)} />
-      <canvas ref={canvasRef} resize="true" className="absolute inset-0 w-full h-full bg-transparent z-10" />
+      <div
+        className="absolute z-0"
+        style={canvasRect
+          ? { left: canvasRect.x, top: canvasRect.y, width: canvasRect.width, height: canvasRect.height }
+          : { inset: 0 }}
+      >
+        <MapillaryBg lastHitPos={lastHitPos} active={!!activeSong} onReady={() => setMapReady(true)} />
+      </div>
+      <canvas ref={canvasRef} resize="true" className="absolute bg-transparent z-10" />
 
       {activeSong && gridVisible && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-cola-brown/60 text-cream-soda font-mono text-xs px-4 py-1.5 rounded-full flex items-center gap-4">
@@ -629,11 +948,43 @@ export default function BeatGame({ className }) {
         </div>
       )}
 
+      {gridVisible && sensorData && sensorData.length > 0 && (
+        <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-black/60 text-yellow-300 font-mono text-xs px-2 py-1 rounded pointer-events-none flex flex-col gap-0.5 items-center z-30">
+          {(() => {
+            const s = sensorData[sensorData.length - 1];
+            return (
+              <>
+                {s?.sensor?.sensitivity != null && (
+                  <div className="w-48 flex items-center gap-2">
+                    <span className="text-cyan-300 text-[10px] whitespace-nowrap">sensitivity</span>
+                    <div className="flex-1 h-2 bg-black border border-cyan-300 rounded overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-cyan-500 to-cyan-300"
+                        style={{ width: `${(s.sensor.sensitivity / 10) * 100}%` }} />
+                    </div>
+                    <span className="text-cyan-300 text-[10px] w-6 text-right">{s.sensor.sensitivity.toFixed(1)}</span>
+                  </div>
+                )}
+                {s?.sensor != null && (
+                  <span className="text-green-300">
+                    🎯 x: {s.sensor.mouseTargetX?.toFixed(2) ?? '—'} y: {s.sensor.mouseTargetY?.toFixed(2) ?? '—'}
+                  </span>
+                )}
+                {canvasRect && (
+                  <span className="text-yellow-200/60 text-[10px]">
+                    canvas {Math.round(canvasRect.width)}×{Math.round(canvasRect.height)} @ ({Math.round(canvasRect.x)},{Math.round(canvasRect.y)})
+                  </span>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
+
       {showPerfect && (
         <div
           key={showPerfect.key}
           className="absolute pointer-events-none z-20"
-          style={{ left: showPerfect.x, top: showPerfect.y, transform: 'translate(-50%, -130%)' }}
+          style={{ left: (canvasRect?.x ?? 0) + showPerfect.x, top: (canvasRect?.y ?? 0) + showPerfect.y, transform: 'translate(-50%, -130%)' }}
         >
           <span
             className="retro-text text-4xl font-bold tracking-widest whitespace-nowrap"
@@ -649,7 +1000,8 @@ export default function BeatGame({ className }) {
         H: grid · P: pixel
       </div>
 
-      {!activeSong && mapReady && <SongSelectModal onStart={(song) => setActiveSong(song)} />}
+      {!activeSong && mapReady && !traced && <StarTraceScreen cursor={menuCursor} canvasRect={canvasRect} onComplete={() => setTraced(true)} />}
+      {!activeSong && mapReady && traced && <SongSelectOverlay cursor={menuCursor} onStart={(song) => setActiveSong(song)} />}
     </div>
   );
 }
