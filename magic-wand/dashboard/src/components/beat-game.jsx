@@ -481,6 +481,7 @@ export default function BeatGame({ className }) {
   const canvasRectRef = useRef(null);
 
   const cursorDotRef = useRef(null);
+  const cursorDotScaleRef = useRef(1);
   const cursorLerpRef = useRef(null);
   const cursorTargetRef = useRef(null);
   const cursorCalibratedRef = useRef(false);
@@ -505,6 +506,17 @@ export default function BeatGame({ className }) {
   const cursorBezierRef = useRef(null);
   const cursorClickTimeRef = useRef(-Infinity);
   const cursorSmoothRef = useRef(null); // EMA-filtered sensor position
+
+  const setCursorDotScale = useCallback((nextScale) => {
+    const dot = cursorDotRef.current;
+    if (!dot) return;
+    const currentScale = cursorDotScaleRef.current || 1;
+    const safeNext = Math.max(0.05, nextScale);
+    const factor = safeNext / currentScale;
+    if (!Number.isFinite(factor) || Math.abs(factor - 1) < 0.0001) return;
+    dot.scale(factor);
+    cursorDotScaleRef.current = safeNext;
+  }, []);
 
   // ─── SETUP PAPER + GRID ────────────────────────────────────────────────────
   useEffect(() => {
@@ -701,18 +713,19 @@ export default function BeatGame({ className }) {
             strokeColor: new paper.Color(1, 0.945, 0.867, 0.6),
             strokeWidth: 3,
           });
+          cursorDotScaleRef.current = 1;
         } else {
           cursorDotRef.current.position = pt;
           const clickAge = now - cursorClickTimeRef.current;
           if (clickAge < 350) {
             const t = clickAge / 350;
             const pulse = t < 0.4 ? 1 + (t / 0.4) * 0.9 : 1 + (1 - (t - 0.4) / 0.6) * 0.9;
-            cursorDotRef.current.scaling = new paper.Point(pulse, pulse);
+            setCursorDotScale(pulse);
             cursorDotRef.current.fillColor = t < 0.5
               ? new paper.Color(1, 0.275, 0.51, 0.95)
               : dotColor;
           } else {
-            cursorDotRef.current.scaling = new paper.Point(1, 1);
+            setCursorDotScale(1);
             cursorDotRef.current.fillColor = dotColor;
           }
         }
@@ -885,11 +898,16 @@ export default function BeatGame({ className }) {
       trailItemsRef.current = [];
       fadingRef.current.forEach(({ beatGroup, approachGroup }) => { beatGroup?.remove(); approachGroup?.remove(); });
       fadingRef.current = [];
+      if (gameLayerRef.current) gameLayerRef.current.removeChildren();
+      if (cursorLayerRef.current) cursorLayerRef.current.removeChildren();
+      beatsRef.current = [];
+      cursorDotRef.current = null;
+      cursorDotScaleRef.current = 1;
       lastTrailPosRef.current = null;
       clearTimeout(trailStateTimerRef.current);
       trailStateRef.current = 'normal';
     };
-  }, [activeSong]);
+  }, [activeSong, setCursorDotScale]);
 
   // ─── CURSOR TARGET from sensor data ───────────────────────────────────────
   useEffect(() => {
@@ -965,6 +983,24 @@ export default function BeatGame({ className }) {
     }
     rafId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafId);
+  }, [activeSong]);
+
+  // Ensure no stale game artifacts remain visible in menu mode.
+  useEffect(() => {
+    if (activeSong || !paperReadyRef.current) return;
+
+    if (gameLayerRef.current) gameLayerRef.current.removeChildren();
+    if (cursorLayerRef.current) cursorLayerRef.current.removeChildren();
+
+    beatsRef.current = [];
+    fadingRef.current = [];
+    trailItemsRef.current = [];
+    cursorDotRef.current = null;
+    cursorDotScaleRef.current = 1;
+    lastTrailPosRef.current = null;
+    cursorClickTimeRef.current = -Infinity;
+
+    paper.view.draw();
   }, [activeSong]);
 
   return (
