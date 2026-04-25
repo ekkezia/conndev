@@ -41,7 +41,6 @@ console.log(
   `🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`,
 );
 
-let mouseEnabled = false;
 let drawState = null; // 'start' | 'stop' | null
 let mouseControlEnabled = false; // true while draw/start override is active
 const detectedLocalMouseScreenSize =
@@ -86,7 +85,7 @@ function setMouseOverrideEnabled(enabled, reason = 'unknown') {
 }
 
 function canControlRealMouse() {
-  return Boolean(robot && mouseControlEnabled && (mouseEnabled || drawState === 'start'));
+  return Boolean(mouseControlEnabled && drawState === 'start');
 }
 
 function parseDrawValue(raw) {
@@ -254,6 +253,7 @@ let targetX = null;
 let targetY = null;
 let lerpX = null;
 let lerpY = null;
+let lastMouseBlockLogAt = 0;
 
 // ===============================
 // Sensor Processing
@@ -302,10 +302,20 @@ function stepLerpedMouse() {
   if (Math.abs(targetX - lerpX) <= MOUSE_LERP_SNAP_DISTANCE) lerpX = targetX;
   if (Math.abs(targetY - lerpY) <= MOUSE_LERP_SNAP_DISTANCE) lerpY = targetY;
 
-  if (!canControlRealMouse()) return;
+  // console.log('can control real mouse', canControlRealMouse());
 
+  if (!canControlRealMouse()) {
+    const now = Date.now();
+    if (now - lastMouseBlockLogAt > 1000) {
+      lastMouseBlockLogAt = now;
+    }
+    return;
+  }
+
+  console.log('controlling mouse');
   try {
     const { mappedX, mappedY } = mapClientToLocalMousePosition(lerpX, lerpY);
+    console.log('moving mouse', mappedX, mappedY, `(client: ${Math.round(targetX)}, ${Math.round(targetY)})`);
     robot.moveMouse(mappedX, mappedY);
   } catch (err) {
     console.error('robotjs moveMouse error:', err.message);
@@ -551,6 +561,15 @@ udpServer.on('message', async (msg, rinfo) => {
   // --- sensor data ---
   if (packetPath === 'kezia/imu/data') {
     try {
+      const drawFromData = parseDrawValue(packetData?.draw);
+      if (drawFromData && drawFromData !== drawState) {
+        drawState = drawFromData;
+        io.emit('sensor-draw', { draw: drawFromData, timestamp: Date.now() });
+        if (drawFromData === 'start') setMouseOverrideEnabled(true, 'data-draw-start');
+        if (drawFromData === 'stop') setMouseOverrideEnabled(false, 'data-draw-stop');
+        console.log(`✍🏻 Draw (from data): ${drawFromData}`);
+      }
+
       const entry = processSensorData(packetData, 'udp');
       await handleSensorEntry(entry, 'UDP');
     } catch (err) {
@@ -563,15 +582,7 @@ udpServer.on('message', async (msg, rinfo) => {
   if (packetPath === 'kezia/imu/power') {
     try {
       if (packetData?.power !== undefined) {
-        const wasEnabled = mouseEnabled;
-        mouseEnabled = packetData.power === true;
-        console.log(`🖱 Power: ${mouseEnabled ? 'ON' : 'OFF'}`);
-
-        if (!wasEnabled && mouseEnabled) startNewSession();
-        else if (wasEnabled && !mouseEnabled) {
-          endSession();
-          setMouseOverrideEnabled(false, 'power-off');
-        }
+        // todo start new firebase session on start/stop
       }
     } catch (err) {
       console.error('UDP power handling error:', err.message);

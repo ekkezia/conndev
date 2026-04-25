@@ -6,6 +6,7 @@
 #include <ArduinoMqttClient.h>
 #include "arduino_secrets.h"
 #include "Adafruit_DRV2605.h"
+#include <Adafruit_NeoPixel.h>
 
 // ================= UDP =================
 WiFiUDP udp;
@@ -20,7 +21,14 @@ char incomingPacket[80];
 const int POT_PIN       = D0;
 const int DRAW_BTN_PIN  = D1;
 const int CLICK_BTN_PIN = D2;
-const int STATUS_LED    = D3;
+
+// ================= NEOPIXELS =================
+// Uses the same wiring as the older battery sketch:
+// data pin 6, 5 pixels in the star.
+#define NEOPIXEL_PIN 6
+#define STAR_LED_COUNT 5
+#define STATUS_PIXEL_INDEX 0
+Adafruit_NeoPixel pixels(STAR_LED_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // ================= WIFI + MQTT =================
 WiFiClient wifiClient;
@@ -42,7 +50,9 @@ const String deviceName    = "kezia";
 // ================= TIMING =================
 const unsigned long SEND_INTERVAL  = 200;
 const unsigned long DEBOUNCE_DELAY = 50;
+const unsigned long DRAW_SYNC_INTERVAL = 1000;
 unsigned long lastMqttSend         = 0;
+unsigned long lastDrawSyncSend     = 0;
 
 // ================= BUTTONS =================
 int drawState = LOW;
@@ -74,6 +84,77 @@ Adafruit_DRV2605 drv;
 #define HAPTIC_RAMP_UP    47
 #define HAPTIC_RAMP_DOWN  48
 #define HAPTIC_ALERT      58
+
+// =========================================
+// PIXEL HELPERS
+// =========================================
+void showAllPixels(uint32_t color) {
+  for (int i = 0; i < STAR_LED_COUNT; i++) {
+    pixels.setPixelColor(i, color);
+  }
+  pixels.show();
+}
+
+void clearPixels() {
+  pixels.clear();
+  pixels.show();
+}
+
+void setStatusPixel(uint32_t color) {
+  pixels.setPixelColor(STATUS_PIXEL_INDEX, color);
+  pixels.show();
+}
+
+void clearStatusPixel() {
+  pixels.setPixelColor(STATUS_PIXEL_INDEX, 0);
+  pixels.show();
+}
+
+void restorePixelsFromDrawState() {
+  if (drawState) {
+    showAllPixels(pixels.Color(180, 0, 120)); // draw idle fuchsia
+  } else {
+    clearPixels();
+  }
+}
+
+void blinkPixelsOneByOne(uint32_t color, int onMs = 85, int offMs = 45) {
+  for (int i = 0; i < STAR_LED_COUNT; i++) {
+    pixels.clear();
+    pixels.setPixelColor(i, color);
+    pixels.show();
+    delay(onMs);
+    pixels.setPixelColor(i, 0);
+    pixels.show();
+    delay(offMs);
+  }
+}
+
+void sweepPixelsFill(uint32_t color, int stepMs = 55) {
+  pixels.clear();
+  pixels.show();
+
+  for (int i = 0; i < STAR_LED_COUNT; i++) {
+    pixels.setPixelColor(i, color);
+    pixels.show();
+    delay(stepMs);
+  }
+}
+
+void applyDrawPixelState(bool isDrawing) {
+  const uint32_t animColor = pixels.Color(90, 60, 30);     // brighter warm amber
+  const uint32_t drawOnColor = pixels.Color(180, 0, 120);  // fuchsia
+
+  // Requested behavior:
+  // draw=start -> blink one-by-one, then all ON
+  // draw=stop  -> blink one-by-one, then all OFF
+  blinkPixelsOneByOne(animColor);
+  if (isDrawing) {
+    showAllPixels(drawOnColor);
+  } else {
+    clearPixels();
+  }
+}
 
 // =========================================
 // HAPTIC HELPERS
@@ -114,6 +195,12 @@ void checkUdpFeedback() {
   }
   else if (msg == "beat_hit perfect") {
     playHaptic2(HAPTIC_RAMP_UP, HAPTIC_DOUBLE);
+    sweepPixelsFill(pixels.Color(0, 140, 0)); // green success sweep
+    if (drawState) {
+      showAllPixels(pixels.Color(180, 0, 120)); // draw idle fuchsia color
+    } else {
+      clearPixels();
+    }
   }
   else if (msg == "beat_hit hit") {
     playHaptic(HAPTIC_TICK);
@@ -128,15 +215,19 @@ void checkUdpFeedback() {
 // =========================================
 void blinkSuccess() {
   mqttClient.poll();
-  digitalWrite(STATUS_LED, HIGH); delay(200);
-  digitalWrite(STATUS_LED, LOW);  delay(200);
+  setStatusPixel(pixels.Color(0, 0, 180)); // blue boot success
+  delay(200);
+  clearStatusPixel();
+  delay(200);
 }
 
 void blinkFail() {
   for (int i = 0; i < 5; i++) {
     mqttClient.poll();
-    digitalWrite(STATUS_LED, HIGH); delay(80);
-    digitalWrite(STATUS_LED, LOW);  delay(80);
+    setStatusPixel(pixels.Color(180, 0, 0)); // red boot failure
+    delay(80);
+    clearStatusPixel();
+    delay(80);
   }
 }
 
@@ -159,8 +250,10 @@ void setup() {
 
   pinMode(DRAW_BTN_PIN, INPUT_PULLUP);
   pinMode(CLICK_BTN_PIN, INPUT_PULLUP);
-  pinMode(STATUS_LED, OUTPUT);
-  digitalWrite(STATUS_LED, LOW);
+
+  pixels.begin();
+  pixels.setBrightness(55);
+  clearPixels();
 
   bool wifiOk = connectToNetwork();
   wifiOk ? blinkSuccess() : blinkFail();
@@ -210,6 +303,7 @@ void setup() {
   Serial.println("Setup completo.");
 
   playHaptic(HAPTIC_TICK);
+  clearPixels();
 }
 
 // =========================================
@@ -255,41 +349,33 @@ void loop() {
 
       if (drawBtnState == LOW) {
         drawState = !drawState;
-        animateLED();
         pulseDraw();
+        animateLED();
+        applyDrawPixelState(drawState);
       }
     }
   }
 
   lastDrawBtnState = drawReading;
 
-  digitalWrite(STATUS_LED, drawState);
+  // ===== CLICK BUTTON (always active, draw ON/OFF) =====
+  int clickReading = digitalRead(CLICK_BTN_PIN);
 
-  // ===== CLICK BUTTON ONLY WHEN DRAWING =====
-  if (drawState) {
-    int clickReading = digitalRead(CLICK_BTN_PIN);
+  if (clickReading != lastClickBtnState) {
+    lastClickDebounce = now;
+  }
 
-    if (clickReading != lastClickBtnState) {
-      lastClickDebounce = now;
-    }
+  if (now - lastClickDebounce > DEBOUNCE_DELAY) {
+    if (clickReading != clickBtnState) {
+      clickBtnState = clickReading;
 
-    if (now - lastClickDebounce > DEBOUNCE_DELAY) {
-      if (clickReading != clickBtnState) {
-        clickBtnState = clickReading;
-
-        if (clickBtnState == LOW) {
-          blinkLED(3);
-          pulseClick();
-        }
+      if (clickBtnState == LOW) {
+        blinkAllPixelsOnce(pixels.Color(255, 255, 255));
+        pulseClick();
       }
     }
-
-    lastClickBtnState = clickReading;
-  } else {
-    // no buzz when clicking while not drawing
-    lastClickBtnState = digitalRead(CLICK_BTN_PIN);
-    clickBtnState = lastClickBtnState;
   }
+  lastClickBtnState = clickReading;
 
   // ===== SENSOR + UDP SEND =====
   if (now - lastMqttSend >= SEND_INTERVAL) {
@@ -299,10 +385,13 @@ void loop() {
 
     int potRaw = analogRead(POT_PIN);
     sensitivity = map(potRaw, 0, 4095, 1, 10);
+    publishMqtt();
+  }
 
-    if (mqttClient.connected()) {
-      publishMqtt();
-    }
+  // Keep draw override in sync in case a single draw packet is dropped.
+  if (drawState && (now - lastDrawSyncSend >= DRAW_SYNC_INTERVAL)) {
+    lastDrawSyncSend = now;
+    pulseDraw();
   }
 }
 
@@ -328,16 +417,17 @@ void readIMU() {
 // =========================================
 void animateLED() {
   for (int i = 0; i < 3; i++) {
-    digitalWrite(STATUS_LED, HIGH); delay(80);
-    digitalWrite(STATUS_LED, LOW);  delay(80);
+    setStatusPixel(pixels.Color(180, 0, 120)); delay(80);
+    clearStatusPixel();                         delay(80);
   }
 }
 
-void blinkLED(int times) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(STATUS_LED, HIGH); delay(80);
-    digitalWrite(STATUS_LED, LOW);  delay(80);
-  }
+void blinkAllPixelsOnce(uint32_t color, int onMs = 80, int offMs = 80) {
+  showAllPixels(color);
+  delay(onMs);
+  clearPixels();
+  delay(offMs);
+  restorePixelsFromDrawState();
 }
 
 // =========================================
@@ -417,6 +507,8 @@ void publishMqtt() {
   msg += "{\"path\":\"kezia/imu/data\",\"data\":";
   msg += "{\"device\":\"";
   msg += deviceName;
+  msg += "\",\"draw\":\"";
+  msg += (drawState ? "start" : "stop");
   msg += "\",\"sensor\":{";
 
   msg += "\"ax\":" + String(ax, 4) + ",";
