@@ -45,8 +45,11 @@ function playSfx(src, vol = 0.7) {
 
 const UNIT = 25;
 const SHOW_BEFORE = 4000;
-const HIT_WINDOW_AFTER = 400;
+const HIT_WINDOW_BEFORE = 260;
+const HIT_WINDOW_AFTER = 550;
+const PERFECT_WINDOW_MS = 320;
 const BEAT_RADIUS = 70;
+const HIT_RADIUS = BEAT_RADIUS * 1.2;
 const APPROACH_START_RADIUS = 160;
 const SHAPES = ['circle', 'heart', 'triangle', 'square'];
 
@@ -190,16 +193,18 @@ function generateStarDots(cx, cy, R, r, dotsPerSegment) {
 
 // ─── SHARED WAND CURSOR HOOK ─────────────────────────────────────────────────
 // Merges server wand cursor + mouse fallback; drives the sparkle trail.
-function useWandCursor(cursor) {
+function useWandCursor(cursor, canvasRect) {
   const [mousePos, setMousePos] = useState(null);
   const [clickKey, setClickKey] = useState(0);
   const [trailItems, setTrailItems] = useState([]);
   const trailRef = useRef([]);
   const lastTrailPosRef = useRef(null);
   const trailFrameRef = useRef(0);
-  const cursorRef = useRef(cursor);
+  const cursorRef = useRef(null);
 
-  const activeCursor = cursor ?? mousePos;
+  // Mouse inside the canvas acts as a local debug override.
+  // Otherwise, fall back to the Arduino-driven cursor.
+  const activeCursor = mousePos ?? cursor;
   useEffect(() => { cursorRef.current = activeCursor; }, [activeCursor]);
 
   useEffect(() => {
@@ -231,12 +236,28 @@ function useWandCursor(cursor) {
     return () => cancelAnimationFrame(rafId);
   }, []);
 
-  const onMouseMove = e => setMousePos({ x: e.clientX, y: e.clientY });
+  const onMouseMove = useCallback((e) => {
+    if (!canvasRect) {
+      setMousePos({ x: e.clientX, y: e.clientY });
+      return;
+    }
+    const insideCanvas =
+      e.clientX >= canvasRect.x &&
+      e.clientX <= canvasRect.x + canvasRect.width &&
+      e.clientY >= canvasRect.y &&
+      e.clientY <= canvasRect.y + canvasRect.height;
+    if (!insideCanvas) {
+      setMousePos(null);
+      return;
+    }
+    setMousePos({ x: e.clientX, y: e.clientY });
+  }, [canvasRect]);
+  const onMouseLeave = useCallback(() => setMousePos(null), []);
   const triggerClick = useCallback(() => {
     playSfx(SFX.click, 0.5);
     setClickKey(k => k + 1);
   }, []);
-  return { activeCursor, trailItems, onMouseMove, clickKey, triggerClick };
+  return { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick };
 }
 
 // Reusable SVG trail + cursor dot (renders into an existing SVG)
@@ -288,11 +309,11 @@ function WandCursorSVG({ activeCursor, trailItems, clickKey = 0 }) {
   );
 }
 
-function StarTraceScreen({ cursor, canvasRect, onComplete }) {
+function StarTraceScreen({ cursor, canvasRect, onComplete, onPerfectTraceHit }) {
   const [hitCount, setHitCount] = useState(0);
   const hitRef = useRef(0);
   const doneRef = useRef(false);
-  const { activeCursor, trailItems, onMouseMove, clickKey, triggerClick } = useWandCursor(cursor);
+  const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } = useWandCursor(cursor, canvasRect);
 
   // 50 dots total (5 per segment × 10 segments) along the star perimeter
   // Centered inside the canvas rect, which is letterboxed within the viewport
@@ -313,17 +334,24 @@ function StarTraceScreen({ cursor, canvasRect, onComplete }) {
       hitRef.current += 1;
       setHitCount(hitRef.current);
       playSfx(SFX.starHit, 0.6);
+      onPerfectTraceHit?.(pt.x, pt.y);
       if (hitRef.current >= dots.length) {
         doneRef.current = true;
+        playSfx(SFX.magic, 0.75);
         setTimeout(onComplete, 500);
       }
     }
-  }, [activeCursor, dots, onComplete]);
+  }, [activeCursor, dots, onComplete, onPerfectTraceHit]);
 
   const pct = Math.round((hitCount / dots.length) * 100);
 
   return (
-    <div className="absolute inset-0 z-50 cursor-none bg-cola-brown/85 backdrop-blur-sm" onMouseMove={onMouseMove} onClick={triggerClick}>
+    <div
+      className="absolute inset-0 z-50 bg-cola-brown/85 backdrop-blur-sm"
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
+      onClick={triggerClick}
+    >
       <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
         <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} />
         {/* star perimeter dots */}
@@ -355,12 +383,17 @@ function StarTraceScreen({ cursor, canvasRect, onComplete }) {
 }
 
 // ─── SONG SELECTION OVERLAY ───────────────────────────────────────────────────
-function SongSelectOverlay({ cursor, onStart }) {
+function SongSelectOverlay({ cursor, canvasRect, onStart }) {
   const [selected, setSelected] = useState(null);
-  const { activeCursor, trailItems, onMouseMove, clickKey, triggerClick } = useWandCursor(cursor);
+  const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } = useWandCursor(cursor, canvasRect);
 
   return (
-    <div className="absolute inset-0 z-50 cursor-none flex items-center justify-center bg-cola-brown/75 backdrop-blur-sm" onMouseMove={onMouseMove} onClick={triggerClick}>
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/75 backdrop-blur-sm"
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
+      onClick={triggerClick}
+    >
       <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
         <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} />
       </svg>
@@ -377,10 +410,10 @@ function SongSelectOverlay({ cursor, onStart }) {
               type="button"
               onClick={() => setSelected(song)}
               className={`
-                flex flex-col gap-0.5 text-left px-4 py-3 rounded-xl border transition-all
+                beat-menu-option flex flex-col gap-0.5 text-left px-4 py-3 rounded-xl border transition-all duration-150
                 ${selected?.src === song.src
-                  ? "border-pink-doll bg-pink-doll/10 text-cream-soda"
-                  : "border-cream-soda/10 bg-cream-soda/5 text-cream-soda/70 hover:border-cream-soda/30 hover:text-cream-soda"
+                  ? "is-selected text-cream-soda"
+                  : "is-idle text-cream-soda/95"
                 }
               `}
             >
@@ -395,10 +428,10 @@ function SongSelectOverlay({ cursor, onStart }) {
           disabled={!selected}
           onClick={() => selected && onStart(selected)}
           className={`
-            w-full py-3 rounded-xl font-mono text-sm font-bold tracking-widest uppercase transition-all
+            beat-menu-start w-full py-3 rounded-xl font-mono text-sm font-bold tracking-widest uppercase transition-all duration-150
             ${selected
-              ? "bg-pink-doll text-cream-soda hover:bg-pink-hot-ribbon active:scale-95 cursor-pointer"
-              : "bg-cream-soda/5 text-cream-soda/20 cursor-not-allowed"
+              ? "is-ready text-cream-soda active:scale-95 cursor-pointer"
+              : "is-disabled text-cream-soda/80 cursor-not-allowed"
             }
           `}
         >
@@ -465,6 +498,10 @@ export default function BeatGame({ className }) {
   const trailStateRef = useRef('normal'); // 'normal' | 'hit' | 'miss'
   const trailStateTimerRef = useRef(null);
   const socketRef = useRef(null);
+
+  const emitPerfectTraceHit = useCallback((x, y) => {
+    socketRef.current?.emit('beat-hit', { perfect: true, x, y, source: 'star-trace' });
+  }, []);
   const cursorBezierRef = useRef(null);
   const cursorClickTimeRef = useRef(-Infinity);
   const cursorSmoothRef = useRef(null); // EMA-filtered sensor position
@@ -583,20 +620,24 @@ export default function BeatGame({ className }) {
         if (beat.hit || beat.missed) continue;
         const dx = cx - beat.x;
         const dy = cy - beat.y;
-        if (Math.sqrt(dx * dx + dy * dy) >= BEAT_RADIUS) continue;
+        if (Math.sqrt(dx * dx + dy * dy) >= HIT_RADIUS) continue;
         const timeToOnset = beat.onsetTime - now;
-        if (timeToOnset < -HIT_WINDOW_AFTER) continue;
+        const inWindow =
+          timeToOnset <= HIT_WINDOW_BEFORE && timeToOnset >= -HIT_WINDOW_AFTER;
+        if (!inWindow) continue;
+        const isPerfect = Math.abs(timeToOnset) <= PERFECT_WINDOW_MS;
         beat.hit = true;
+        const hitColor = new paper.Color(isPerfect ? '#aaff44' : '#44dd88');
         for (let i = 0; i < 4 && i < beat.beatGroup.children.length; i++) {
-          beat.beatGroup.children[i].fillColor = new paper.Color('#aaff44');
+          beat.beatGroup.children[i].fillColor = hitColor;
         }
-        socketRef.current?.emit('beat-hit', { perfect: true, x: beat.x, y: beat.y });
-        triggerPerfect(beat.x, beat.y);
+        socketRef.current?.emit('beat-hit', { perfect: isPerfect, x: beat.x, y: beat.y });
+        if (isPerfect) triggerPerfect(beat.x, beat.y);
         cursorClickTimeRef.current = performance.now();
         trailStateRef.current = 'hit';
         clearTimeout(trailStateTimerRef.current);
         trailStateTimerRef.current = setTimeout(() => { trailStateRef.current = 'normal'; }, 1500);
-        setScore((s) => s + 30);
+        setScore((s) => s + (isPerfect ? 30 : 10));
         const { width, height } = canvasSizeRef.current;
         setLastHitPos({ xNorm: beat.x / width, yNorm: beat.y / height });
         break;
@@ -769,11 +810,12 @@ export default function BeatGame({ className }) {
         // Gyro hit
         const dx = cursorX - beat.x;
         const dy = cursorY - beat.y;
-        const inArea = Math.sqrt(dx * dx + dy * dy) < BEAT_RADIUS;
-        const inWindow = timeToOnset > -HIT_WINDOW_AFTER;
+        const inArea = Math.sqrt(dx * dx + dy * dy) < HIT_RADIUS;
+        const inWindow =
+          timeToOnset <= HIT_WINDOW_BEFORE && timeToOnset >= -HIT_WINDOW_AFTER;
 
         if (inArea && inWindow) {
-          const isPerfect = Math.abs(timeToOnset) < 200;
+          const isPerfect = Math.abs(timeToOnset) <= PERFECT_WINDOW_MS;
           const hitColor = new paper.Color(isPerfect ? '#aaff44' : '#44dd88');
           for (let i = 0; i < 4 && i < beat.beatGroup.children.length; i++) {
             beat.beatGroup.children[i].fillColor = hitColor;
@@ -907,7 +949,10 @@ export default function BeatGame({ className }) {
       rafId = requestAnimationFrame(loop);
       const lerp = cursorLerpRef.current;
       const bezier = cursorBezierRef.current;
-      if (!lerp || !bezier) return;
+      if (!lerp || !bezier) {
+        setMenuCursor((prev) => (prev ? null : prev));
+        return;
+      }
       if (bezier.t < 1) {
         bezier.t = Math.min(1, bezier.t + 0.07);
         const pos = evalBezier(bezier, bezier.t);
@@ -1000,8 +1045,21 @@ export default function BeatGame({ className }) {
         H: grid · P: pixel
       </div>
 
-      {!activeSong && mapReady && !traced && <StarTraceScreen cursor={menuCursor} canvasRect={canvasRect} onComplete={() => setTraced(true)} />}
-      {!activeSong && mapReady && traced && <SongSelectOverlay cursor={menuCursor} onStart={(song) => setActiveSong(song)} />}
+      {!activeSong && mapReady && !traced && (
+        <StarTraceScreen
+          cursor={menuCursor}
+          canvasRect={canvasRect}
+          onComplete={() => setTraced(true)}
+          onPerfectTraceHit={emitPerfectTraceHit}
+        />
+      )}
+      {!activeSong && mapReady && traced && (
+        <SongSelectOverlay
+          cursor={menuCursor}
+          canvasRect={canvasRect}
+          onStart={(song) => setActiveSong(song)}
+        />
+      )}
     </div>
   );
 }

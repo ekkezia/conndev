@@ -254,6 +254,54 @@ lerpIo = io;
 // ===============================
 const UDP_PORT = Number(process.env.UDP_PORT) || 4210;
 const udpServer = dgram.createSocket('udp4');
+const configuredArduinoFeedbackHost =
+  process.env.ARDUINO_FEEDBACK_HOST?.trim() || null;
+const configuredArduinoFeedbackPort = Number(process.env.ARDUINO_FEEDBACK_PORT);
+let lastArduinoUdpClient = null;
+
+function rememberArduinoUdpClient(packetPath, rinfo) {
+  if (!packetPath?.startsWith('kezia/imu/')) return;
+  if (!rinfo?.address || !Number.isFinite(rinfo?.port) || rinfo.port <= 0) return;
+  lastArduinoUdpClient = { address: rinfo.address, port: rinfo.port };
+}
+
+function getArduinoFeedbackTarget() {
+  if (
+    configuredArduinoFeedbackHost &&
+    Number.isFinite(configuredArduinoFeedbackPort) &&
+    configuredArduinoFeedbackPort > 0
+  ) {
+    return {
+      address: configuredArduinoFeedbackHost,
+      port: configuredArduinoFeedbackPort,
+    };
+  }
+  return lastArduinoUdpClient;
+}
+
+function sendArduinoFeedbackMessage(message, source = 'socket') {
+  const target = getArduinoFeedbackTarget();
+  if (!target) {
+    console.warn(
+      `⚠️ Arduino feedback skipped (${message}) - no UDP target. Set ARDUINO_FEEDBACK_HOST/ARDUINO_FEEDBACK_PORT or wait for a kezia/imu/* packet.`,
+    );
+    return;
+  }
+
+  udpServer.send(message, target.port, target.address, (err) => {
+    if (err) {
+      console.error(`❌ Failed to send Arduino feedback: ${err.message}`);
+      return;
+    }
+    console.log(
+      `📤 Arduino feedback (${source}) -> ${target.address}:${target.port} | ${message}`,
+    );
+  });
+}
+
+function sendBeatFeedbackToArduino(state, source = 'socket') {
+  sendArduinoFeedbackMessage(`beat_hit ${state}`, source);
+}
 
 async function handleSensorEntry(entry, label = 'UDP') {
   if (!entry) return;
@@ -347,6 +395,7 @@ udpServer.on('message', async (msg, rinfo) => {
     console.warn('UDP packet missing path');
     return;
   }
+  rememberArduinoUdpClient(packetPath, rinfo);
 
   // --- sensor data ---
   if (packetPath === 'kezia/imu/data') {
@@ -466,6 +515,23 @@ io.on('connection', async (socket) => {
 
   socket.on('sensor-realtime-send', (parsed) => {
     processSensorData(parsed, 'socket');
+  });
+
+  socket.on('beat-hit', (data = {}) => {
+    const state = data?.perfect === true ? 'perfect' : 'hit';
+    sendBeatFeedbackToArduino(state, 'beat-hit');
+  });
+
+  socket.on('beat-miss', () => {
+    sendBeatFeedbackToArduino('missed', 'beat-miss');
+  });
+
+  socket.on('ui-hover', () => {
+    sendArduinoFeedbackMessage('hover', 'ui-hover');
+  });
+
+  socket.on('ui-click', () => {
+    sendArduinoFeedbackMessage('click', 'ui-click');
   });
 
   socket.on('hue-control', (data) => {

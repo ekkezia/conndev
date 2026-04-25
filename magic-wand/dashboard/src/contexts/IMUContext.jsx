@@ -18,6 +18,8 @@ export function IMUProvider({ children }) {
   const mousePosRef = useRef(null); // always-current mousePos for use in socket closures
   const mouseClientPosRef = useRef(null); // { x, y } in viewport coords for DOM hit-testing
   const hoverTargetRef = useRef(null);
+  const hoverBuzzTargetRef = useRef(null);
+  const lastHoverBuzzAtRef = useRef(0);
   const [clear, setClear] = useState(false);
   const [drawState, setDrawState] = useState({ draw: false, timestamp: null });
   const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
@@ -63,7 +65,14 @@ export function IMUProvider({ children }) {
     };
   }, []);
 
-  const getInteractiveTarget = useCallback((clientPos) => {
+  const getHoverTarget = useCallback((clientPos) => {
+    if (!clientPos) return null;
+    const el = document.elementFromPoint(clientPos.x, clientPos.y);
+    if (!el) return null;
+    return el.closest('button, [role="button"], a[href], .cursor-pointer, [data-clickable="true"]');
+  }, []);
+
+  const getClickTarget = useCallback((clientPos) => {
     if (!clientPos) return null;
     const el = document.elementFromPoint(clientPos.x, clientPos.y);
     if (!el) return null;
@@ -73,13 +82,38 @@ export function IMUProvider({ children }) {
     );
   }, []);
 
+  const isClickableTarget = useCallback(
+    (el) =>
+      Boolean(
+        el?.closest('button, [role="button"], a[href], .cursor-pointer, [data-clickable="true"]'),
+      ),
+    [],
+  );
+
   const setHoverTarget = useCallback((nextTarget) => {
     const prevTarget = hoverTargetRef.current;
     if (prevTarget === nextTarget) return;
     if (prevTarget?.classList) prevTarget.classList.remove('imu-hover-target');
     hoverTargetRef.current = nextTarget;
     if (nextTarget?.classList) nextTarget.classList.add('imu-hover-target');
-  }, []);
+
+    if (!nextTarget) {
+      hoverBuzzTargetRef.current = null;
+      return;
+    }
+
+    if (hoverBuzzTargetRef.current === nextTarget) return;
+    const now = Date.now();
+    if (now - lastHoverBuzzAtRef.current < 140) return;
+
+    hoverBuzzTargetRef.current = nextTarget;
+    lastHoverBuzzAtRef.current = now;
+    socket.current?.emit('ui-hover', {
+      tag: nextTarget.tagName?.toLowerCase?.() ?? null,
+      clickable: isClickableTarget(nextTarget),
+      timestamp: now,
+    });
+  }, [isClickableTarget]);
 
   // Always-fresh data for the selected session — derived by looking up sessions[] by ID
   // (selectedSession itself is a stale snapshot; sessions[] is the live source of truth)
@@ -186,7 +220,7 @@ export function IMUProvider({ children }) {
       mousePosRef.current = pos;
       const clientPos = toClientPoint(pos);
       mouseClientPosRef.current = clientPos;
-      setHoverTarget(getInteractiveTarget(clientPos));
+      setHoverTarget(getHoverTarget(clientPos));
     });
 
     socket.current.on('sensor-click', () => {
@@ -200,7 +234,7 @@ export function IMUProvider({ children }) {
 
       // 3. trigger browser click at last known mouse position
       const clientPos = mouseClientPosRef.current || toClientPoint(mousePosRef.current);
-      const target = getInteractiveTarget(clientPos);
+      const target = getClickTarget(clientPos);
       if (target && clientPos) {
         target.dispatchEvent(
           new MouseEvent('mousedown', {
@@ -228,6 +262,13 @@ export function IMUProvider({ children }) {
         );
       }
 
+      socket.current?.emit('ui-click', {
+        hasTarget: Boolean(target),
+        tag: target?.tagName?.toLowerCase?.() ?? null,
+        clickable: isClickableTarget(target),
+        timestamp: Date.now(),
+      });
+
       // Optional: also emit a global custom event
       window.dispatchEvent(new Event('imu-click'));
     });
@@ -237,7 +278,7 @@ export function IMUProvider({ children }) {
       window.removeEventListener('mousemove', onMouseMove);
       setHoverTarget(null);
     };
-  }, [playClickTone, toClientPoint, getInteractiveTarget, setHoverTarget]);
+  }, [playClickTone, toClientPoint, getHoverTarget, getClickTarget, isClickableTarget, setHoverTarget]);
 
   const value = {
     mouseEnabled,

@@ -89,3 +89,104 @@ code {
     0 0 0 1px rgba(255, 241, 221, 0.45),
     0 8px 20px rgba(0, 0, 0, 0.35);
 }
+
+.beat-menu-option {
+  background: linear-gradient(
+    105deg,
+    rgba(255, 180, 59, 0.34) 0%,
+    rgba(255, 106, 45, 0.22) 55%,
+    rgba(217, 58, 106, 0.16) 100%
+  );
+  border-color: rgba(255, 180, 59, 0.70) !important;
+  box-shadow:
+    0 12px 24px rgba(33, 12, 22, 0.30),
+    inset 0 0 0 1px rgba(255, 241, 221, 0.16);
+}
+
+.beat-menu-option.is-idle {
+  background: linear-gradient(
+    102deg,
+    rgba(255, 180, 59, 0.32) 0%,
+    rgba(255, 154, 90, 0.23) 50%,
+    rgba(217, 58, 106, 0.18) 100%
+  );
+}
+
+.beat-menu-option.is-selected {
+  background: linear-gradient(
+    100deg,
+    rgba(255, 241, 221, 0.34) 0%,
+    rgba(255, 180, 59, 0.28) 50%,
+    rgba(255, 79, 163, 0.22) 100%
+  );
+  border-color: rgba(255, 241, 221, 0.84) !important;
+}
+
+.beat-menu-option:hover,
+.beat-menu-option.imu-hover-target {
+  transform: translateY(-1px) !important;
+  filter: none !important;
+  background: linear-gradient(
+    95deg,
+    rgba(255, 241, 221, 0.24) 0%,
+    rgba(255, 154, 90, 0.16) 52%,
+    rgba(255, 79, 163, 0.16) 100%
+  ) !important;
+  border-color: rgba(255, 241, 221, 0.62) !important;
+  color: var(--cream-soda) !important;
+  box-shadow:
+    0 14px 28px rgba(35, 14, 24, 0.36),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16) !important;
+}
+
+.beat-menu-option.is-selected:hover,
+.beat-menu-option.is-selected.imu-hover-target {
+  background: linear-gradient(
+    95deg,
+    rgba(255, 241, 221, 0.30) 0%,
+    rgba(255, 180, 59, 0.24) 48%,
+    rgba(255, 79, 163, 0.20) 100%
+  ) !important;
+  border-color: rgba(255, 241, 221, 0.72) !important;
+}
+
+.beat-menu-start {
+  background: linear-gradient(
+    96deg,
+    rgba(255, 180, 59, 0.48) 0%,
+    rgba(255, 106, 45, 0.44) 52%,
+    rgba(255, 79, 163, 0.38) 100%
+  );
+  border: 1px solid rgba(255, 241, 221, 0.65);
+  box-shadow:
+    0 14px 28px rgba(35, 14, 24, 0.38),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.beat-menu-start.is-disabled {
+  background: linear-gradient(
+    96deg,
+    rgba(255, 180, 59, 0.24) 0%,
+    rgba(255, 106, 45, 0.22) 52%,
+    rgba(217, 58, 106, 0.20) 100%
+  );
+  border-color: rgba(255, 241, 221, 0.42);
+  box-shadow:
+    0 10px 20px rgba(30, 10, 18, 0.26),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+}
+
+.beat-menu-start.is-ready:hover,
+.beat-menu-start.is-ready.imu-hover-target {
+  background: linear-gradient(
+    96deg,
+    rgba(255, 215, 105, 0.58) 0%,
+    rgba(255, 126, 70, 0.52) 52%,
+    rgba(255, 100, 178, 0.46) 100%
+  ) !important;
+  border-color: rgba(255, 241, 221, 0.82) !important;
+  filter: none !important;
+  box-shadow:
+    0 16px 32px rgba(44, 16, 28, 0.44),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.24) !important;
+}

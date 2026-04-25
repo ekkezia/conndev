@@ -1,27 +1,26 @@
 #include <Wire.h>
-#include <MPU6050.h>          // by Electronic Cats (or jrowberg) — install via Library Manager
+#include <MPU6050.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include <ArduinoMqttClient.h>
 #include "arduino_secrets.h"
+#include "Adafruit_DRV2605.h"
+
+// ================= UDP =================
 WiFiUDP udp;
 
-IPAddress serverIp(10, 23, 10, 70);  // your computer IP
+IPAddress serverIp(10, 23, 10, 70);   // your computer IP
 const unsigned int serverUdpPort = 4210;
+const unsigned int localUdpPort  = 4211; // Arduino listens here for beat feedback
 
-// ================= PIN MAP (Xiao ESP32-C6) =================
-// D0  → Potentiometer wiper (analog sensitivity)
-// D1  → Draw button  (INPUT_PULLUP, active LOW)
-// D2  → Click button (INPUT_PULLUP, active LOW)
-// D3  → Optional status LED (or INT from IMU)
-// D4  → IMU SDA (I2C)
-// D5  → IMU SCL (I2C)
+char incomingPacket[80];
 
+// ================= PIN MAP =================
 const int POT_PIN       = D0;
 const int DRAW_BTN_PIN  = D1;
 const int CLICK_BTN_PIN = D2;
-const int STATUS_LED    = D3;   // wire an LED + 330Ω to GND, or remove if unused
+const int STATUS_LED    = D3;
 
 // ================= WIFI + MQTT =================
 WiFiClient wifiClient;
@@ -46,23 +45,86 @@ const unsigned long DEBOUNCE_DELAY = 50;
 unsigned long lastMqttSend         = 0;
 
 // ================= BUTTONS =================
-int  drawState         = LOW;
-int  drawBtnState      = HIGH, lastDrawBtnState = HIGH;
+int drawState = LOW;
+
+int drawBtnState = HIGH;
+int lastDrawBtnState = HIGH;
 unsigned long lastDrawDebounce = 0;
 
-int  clickBtnState     = HIGH, lastClickBtnState = HIGH;
+int clickBtnState = HIGH;
+int lastClickBtnState = HIGH;
 unsigned long lastClickDebounce = 0;
 
 // ================= SENSITIVITY =================
 int sensitivity = 5;
 
 // ================= NTP =================
-bool ntpBegun   = false;
+bool ntpBegun = false;
 bool ntpStarted = false;
 unsigned long lastNtpAttempt = 0;
 
+// ================= HAPTICS =================
+Adafruit_DRV2605 drv;
+
+#define HAPTIC_TICK       3
+#define HAPTIC_CLICK      1
+#define HAPTIC_DOUBLE     10
+#define HAPTIC_SOFT_BUMP  14
+#define HAPTIC_BUZZ       16
+#define HAPTIC_RAMP_UP    47
+#define HAPTIC_RAMP_DOWN  48
+#define HAPTIC_ALERT      58
+
 // =========================================
-// DEBUG BLINK (single LED on D3)
+// HAPTIC HELPERS
+// =========================================
+void playHaptic(int effect) {
+  drv.setWaveform(0, effect);
+  drv.setWaveform(1, 0);
+  drv.go();
+}
+
+void playHaptic2(int effect1, int effect2) {
+  drv.setWaveform(0, effect1);
+  drv.setWaveform(1, effect2);
+  drv.setWaveform(2, 0);
+  drv.go();
+}
+
+void checkUdpFeedback() {
+  int packetSize = udp.parsePacket();
+  if (!packetSize) return;
+
+  int len = udp.read(incomingPacket, sizeof(incomingPacket) - 1);
+  if (len <= 0) return;
+
+  incomingPacket[len] = '\0';
+
+  String msg = String(incomingPacket);
+  msg.trim();
+
+  Serial.print("UDP feedback: ");
+  Serial.println(msg);
+
+  if (msg == "hover") {
+    playHaptic(HAPTIC_TICK);
+  }
+  else if (msg == "click") {
+    playHaptic(HAPTIC_CLICK);
+  }
+  else if (msg == "beat_hit perfect") {
+    playHaptic2(HAPTIC_RAMP_UP, HAPTIC_DOUBLE);
+  }
+  else if (msg == "beat_hit hit") {
+    playHaptic(HAPTIC_TICK);
+  }
+  // else if (msg == "beat_hit missed") {
+  //   playHaptic(HAPTIC_SOFT_BUMP); 
+  //}
+}
+
+// =========================================
+// DEBUG BLINK
 // =========================================
 void blinkSuccess() {
   mqttClient.poll();
@@ -79,7 +141,9 @@ void blinkFail() {
 }
 
 void hangWithBlink(const char* label) {
-  Serial.print("COLGADO: "); Serial.println(label);
+  Serial.print("COLGADO: ");
+  Serial.println(label);
+
   while (true) {
     blinkFail();
     delay(1000);
@@ -93,22 +157,24 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  pinMode(DRAW_BTN_PIN,  INPUT_PULLUP);
+  pinMode(DRAW_BTN_PIN, INPUT_PULLUP);
   pinMode(CLICK_BTN_PIN, INPUT_PULLUP);
-  pinMode(STATUS_LED,    OUTPUT);
+  pinMode(STATUS_LED, OUTPUT);
   digitalWrite(STATUS_LED, LOW);
 
-  // ------ TEST 0: WiFi ------
   bool wifiOk = connectToNetwork();
   wifiOk ? blinkSuccess() : blinkFail();
   if (!wifiOk) hangWithBlink("WiFi");
 
-  // Build unique client ID from MAC
+  // Start UDP listener after WiFi
+  udp.begin(localUdpPort);
+  Serial.print("Arduino UDP listening on port ");
+  Serial.println(localUdpPort);
+
   uint8_t mac[6];
   WiFi.macAddress(mac);
   for (int i = 0; i < 3; i++) clientID += String(mac[i], HEX);
 
-  // ------ TEST 1: MQTT ------
   mqttClient.setId(clientID);
   mqttClient.setUsernamePassword(SECRET_MQTT_USER, SECRET_MQTT_PASS);
   mqttClient.setKeepAliveInterval(6000);
@@ -117,8 +183,6 @@ void setup() {
   mqttOk ? blinkSuccess() : blinkFail();
   if (!mqttOk) hangWithBlink("MQTT");
 
-  // ------ TEST 2: IMU ------
-  // ESP32-C6 default I2C: SDA=D4, SCL=D5
   Wire.begin(D4, D5);
   imu.initialize();
 
@@ -126,7 +190,6 @@ void setup() {
   imuOk ? blinkSuccess() : blinkFail();
   if (!imuOk) hangWithBlink("IMU");
 
-  // ------ TEST 3: MQTT send test ------
   mqttClient.poll();
   mqttClient.beginMessage("kezia/test");
   mqttClient.print("ok");
@@ -135,7 +198,18 @@ void setup() {
   result == 1 ? blinkSuccess() : blinkFail();
   if (result != 1) hangWithBlink("MQTT send");
 
+  if (!drv.begin()) {
+    Serial.println("HAPTICS DRV2605 not found");
+    while (1);
+  }
+
+  drv.selectLibrary(1);
+  drv.setMode(DRV2605_MODE_INTTRIG);
+  drv.useERM(); // use this for normal coin vibration motor
+
   Serial.println("Setup completo.");
+
+  playHaptic(HAPTIC_TICK);
 }
 
 // =========================================
@@ -143,82 +217,91 @@ void setup() {
 // =========================================
 void loop() {
   mqttClient.poll();
+
+  // Listen for server feedback: beat_hit perfect / hit / missed
+  checkUdpFeedback();
+
   unsigned long now = millis();
 
-  // NTP: start once
   if (!ntpBegun) {
     timeClient.begin();
     ntpBegun = true;
   }
 
-  // MQTT: reconnect if dropped
   if (!mqttClient.connected()) {
     connectToBroker();
+    // no reconnect buzz
   }
 
-  // NTP: sync every 10 s until successful
   if (!ntpStarted && now - lastNtpAttempt > 10000) {
     lastNtpAttempt = now;
+
     if (timeClient.forceUpdate()) {
       ntpStarted = true;
       Serial.println("NTP OK");
     }
   }
 
-  // ====== DRAW BUTTON ======
+  // ===== DRAW BUTTON =====
   int drawReading = digitalRead(DRAW_BTN_PIN);
-  if (drawReading != lastDrawBtnState) lastDrawDebounce = now;
+
+  if (drawReading != lastDrawBtnState) {
+    lastDrawDebounce = now;
+  }
 
   if (now - lastDrawDebounce > DEBOUNCE_DELAY) {
     if (drawReading != drawBtnState) {
       drawBtnState = drawReading;
-      if (drawBtnState == LOW) {          // pressed
+
+      if (drawBtnState == LOW) {
         drawState = !drawState;
         animateLED();
         pulseDraw();
       }
     }
   }
+
   lastDrawBtnState = drawReading;
 
-  // Status LED mirrors draw state
   digitalWrite(STATUS_LED, drawState);
 
-  // ====== CLICK BUTTON (only when drawing) ======
+  // ===== CLICK BUTTON ONLY WHEN DRAWING =====
   if (drawState) {
     int clickReading = digitalRead(CLICK_BTN_PIN);
-    if (clickReading != lastClickBtnState) lastClickDebounce = now;
+
+    if (clickReading != lastClickBtnState) {
+      lastClickDebounce = now;
+    }
 
     if (now - lastClickDebounce > DEBOUNCE_DELAY) {
       if (clickReading != clickBtnState) {
         clickBtnState = clickReading;
-        if (clickBtnState == LOW) {       // pressed
+
+        if (clickBtnState == LOW) {
           blinkLED(3);
           pulseClick();
         }
       }
     }
+
     lastClickBtnState = clickReading;
+  } else {
+    // no buzz when clicking while not drawing
+    lastClickBtnState = digitalRead(CLICK_BTN_PIN);
+    clickBtnState = lastClickBtnState;
   }
 
-  // ====== SENSOR + MQTT ======
+  // ===== SENSOR + UDP SEND =====
   if (now - lastMqttSend >= SEND_INTERVAL) {
     lastMqttSend = now;
 
     readIMU();
 
-    // Potentiometer: 12-bit (0–4095) → sensitivity 1–10
     int potRaw = analogRead(POT_PIN);
     sensitivity = map(potRaw, 0, 4095, 1, 10);
 
     if (mqttClient.connected()) {
       publishMqtt();
-      // Quick status flash without blocking
-      digitalWrite(STATUS_LED, HIGH);
-      static unsigned long ledOnAt = 0;
-      ledOnAt = now;
-      // Turn off after 30 ms on next loop pass
-      if (now - ledOnAt > 30) digitalWrite(STATUS_LED, drawState);
     }
   }
 }
@@ -228,12 +311,13 @@ void loop() {
 // =========================================
 void readIMU() {
   int16_t rawAx, rawAy, rawAz, rawGx, rawGy, rawGz;
+
   imu.getMotion6(&rawAx, &rawAy, &rawAz, &rawGx, &rawGy, &rawGz);
 
-  // Convert to g (±2g range, 16384 LSB/g) and °/s (±250°/s, 131 LSB/°/s)
   ax = rawAx / 16384.0f;
   ay = rawAy / 16384.0f;
   az = rawAz / 16384.0f;
+
   gx = rawGx / 131.0f;
   gy = rawGy / 131.0f;
   gz = rawGz / 131.0f;
@@ -261,16 +345,22 @@ void blinkLED(int times) {
 // =========================================
 bool connectToNetwork() {
   int attempts = 0;
+
   WiFi.begin(SECRET_SSID, SECRET_PASS);
+
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     Serial.println("WiFi intentando...");
     delay(1000);
     attempts++;
   }
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi OK");
+    Serial.print("Arduino IP: ");
+    Serial.println(WiFi.localIP());
     return true;
   }
+
   Serial.println("WiFi FALLO");
   return false;
 }
@@ -287,12 +377,13 @@ bool connectToBroker() {
     Serial.println(mqttClient.connectError());
     return false;
   }
+
   Serial.println("Broker OK");
   return true;
 }
 
 // =========================================
-// MQTT PUBLISH
+// UDP SEND EVENTS
 // =========================================
 void pulseClick() {
   String msg = "{\"path\":\"kezia/imu/click\",\"data\":true}";
@@ -319,7 +410,7 @@ void pulseDraw() {
   Serial.println(state);
 }
 
-// replace fn with publishMessage
+// This still sends over UDP even though the function name says MQTT.
 void publishMqtt() {
   String msg = "";
 
