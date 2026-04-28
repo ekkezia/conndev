@@ -131,6 +131,7 @@ int lastCaptureBtn = HIGH;
 unsigned long lastButtonMs = 0;
 unsigned long lastCaptureMs = 0;
 const unsigned long buttonDebounceMs = 180;
+const unsigned long encoderLongPressMs = 2200;
 
 JPEGDEC jpeg;
 
@@ -142,6 +143,9 @@ bool gpsWaitingScreenDrawn = false;
 bool gpsSearchTextVisible = true;
 unsigned long gpsBlinkMs = 0;
 unsigned long provisioningStartedMs = 0;
+unsigned long encoderPressStartMs = 0;
+bool encoderPressing = false;
+bool encoderLongPressHandled = false;
 const unsigned long GPS_BLINK_INTERVAL_MS = 450;
 const unsigned long BOOT_SPLASH_MS = 1000;
 
@@ -162,6 +166,12 @@ struct ChunkedReader {
   int remainingInChunk;
   bool done;
 };
+
+// ---------- Forward Declarations ----------
+void drawImageMessage(const char* msg1, const char* msg2 = nullptr, uint16_t color = ST77XX_WHITE);
+void drawLoadingOverlay();
+void drawSavingOverlay();
+void drawImage();
 
 // ---------- Helpers ----------
 const char* wifiStatusToString(int s) {
@@ -255,6 +265,42 @@ bool saveProvisionedCredentials(const String& ssidValue, const String& passValue
   return true;
 }
 
+const char* wifiStatusReason(wl_status_t status) {
+  switch (status) {
+    case WL_CONNECTED:      return "Connected";
+    case WL_NO_SSID_AVAIL:  return "Network not found";
+    case WL_CONNECT_FAILED: return "Wrong password or auth failed";
+    case WL_CONNECTION_LOST:return "Connection lost";
+    case WL_IDLE_STATUS:    return "Idle";
+    case WL_DISCONNECTED:   return "Disconnected";
+    default:                return "Unknown Wi-Fi error";
+  }
+}
+
+bool testWifiCredentials(const char* candidateSsid, const char* candidatePass, wl_status_t& finalStatus, unsigned long timeoutMs = 12000) {
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.disconnect();
+  delay(200);
+  WiFi.begin(candidateSsid, candidatePass);
+
+  unsigned long start = millis();
+  while (millis() - start < timeoutMs) {
+    wl_status_t s = WiFi.status();
+    if (s == WL_CONNECTED) {
+      finalStatus = s;
+      return true;
+    }
+    if (s == WL_CONNECT_FAILED || s == WL_NO_SSID_AVAIL) {
+      finalStatus = s;
+      return false;
+    }
+    delay(150);
+  }
+
+  finalStatus = WiFi.status();
+  return false;
+}
+
 String provisioningPageHtml() {
   String html =
     "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -279,7 +325,9 @@ String provisioningPageHtml() {
     "const d=new URLSearchParams(new FormData(f));"
     "s.textContent='Saving...';"
     "const r=await fetch('/provision',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:d.toString()});"
-    "s.textContent=await r.text();"
+    "const t=await r.text();"
+    "s.style.color=r.ok?'#0b7a2b':'#b00020';"
+    "s.textContent=t;"
     "});"
     "</script></body></html>";
   return html;
@@ -299,6 +347,19 @@ void handleProvisionSubmit() {
     return;
   }
 
+  wl_status_t status = WL_IDLE_STATUS;
+  bool connected = testWifiCredentials(newSsid.c_str(), newPass.c_str(), status);
+  if (!connected) {
+    String msg = "Could not connect: ";
+    msg += wifiStatusReason(status);
+    provisionServer.send(400, "text/plain", msg);
+    Serial.print("[PROVISION] Credential test failed for SSID ");
+    Serial.print(newSsid);
+    Serial.print(" -> ");
+    Serial.println(wifiStatusReason(status));
+    return;
+  }
+
   if (!saveProvisionedCredentials(newSsid, newPass)) {
     provisionServer.send(500, "text/plain", "Failed to save credentials.");
     return;
@@ -307,7 +368,7 @@ void handleProvisionSubmit() {
   provisioningCompleted = true;
   Serial.print("[PROVISION] Received credentials for SSID: ");
   Serial.println(wifiSsid);
-  provisionServer.send(200, "text/plain", "Saved. Device will now continue startup.");
+  provisionServer.send(200, "text/plain", "Connected and saved. Device will now continue startup.");
 }
 
 void startProvisionPortal() {
@@ -337,6 +398,44 @@ void stopProvisionPortal() {
   WiFi.softAPdisconnect(true);
   provisioningActive = false;
   Serial.println("[PROVISION] AP portal stopped.");
+}
+
+void drawCurrentInteractiveScreen() {
+  drawAllBars();
+  drawText();
+
+  if (appMode == MODE_NEAREST) {
+    if (selectedNearestIsCamera()) {
+      drawLoadingOverlay();
+      delay(10);
+      drawImage();
+    } else if (selectedNearestIsGallery()) {
+      drawImageMessage("GALLERY");
+    } else {
+      drawImageMessage("NO CAMERAS", "Press refresh");
+    }
+    return;
+  }
+
+  if (appMode == MODE_CAPTURES) {
+    if (selectedCaptureIsEntry()) {
+      drawLoadingOverlay();
+      delay(10);
+      drawImage();
+    } else if (selectedCaptureIsBack()) {
+      drawImageMessage("BACK");
+    } else {
+      drawImageMessage("CAPTURES", "No captures yet");
+    }
+  }
+}
+
+void enterProvisioningMode() {
+  if (provisioningActive) return;
+  Serial.println("[APP] Entering provisioning mode (encoder long press).");
+  provisioningCompleted = false;
+  startProvisionPortal();
+  drawProvisioningScreen();
 }
 
 void clearNearestList() {
@@ -987,7 +1086,7 @@ void drawText() {
   }
 }
 
-void drawImageMessage(const char* msg1, const char* msg2 = nullptr, uint16_t color = ST77XX_WHITE) {
+void drawImageMessage(const char* msg1, const char* msg2, uint16_t color) {
   tft.fillRect(IMG_X, IMG_Y, IMG_W, IMG_H, ST77XX_BLACK);
   tft.drawRect(IMG_X - 1, IMG_Y - 1, IMG_W + 2, IMG_H + 2, ST77XX_WHITE);
   tft.setTextColor(color, ST77XX_BLACK);
@@ -1188,6 +1287,8 @@ void connectWifi() {
   } else {
     Serial.println("[WiFi] FAILED to connect within 20s");
     logWifiStatus("[WiFi] Final status:");
+    Serial.print("[WiFi] Reason: ");
+    Serial.println(wifiStatusReason((wl_status_t)WiFi.status()));
   }
 }
 
@@ -1520,37 +1621,58 @@ void readEncoderButton() {
   int sw = digitalRead(ENC_SW);
   unsigned long now = millis();
 
-  if (sw != lastSW && sw == LOW && (now - lastButtonMs) > buttonDebounceMs) {
+  if (sw == LOW && lastSW == HIGH) {
+    encoderPressing = true;
+    encoderPressStartMs = now;
+    encoderLongPressHandled = false;
+  }
+
+  if (sw == LOW && encoderPressing && !encoderLongPressHandled &&
+      (now - encoderPressStartMs) >= encoderLongPressMs) {
+    encoderLongPressHandled = true;
     lastButtonMs = now;
+    enterProvisioningMode();
+  }
 
-    if (appMode == MODE_NEAREST) {
-      if (selectedNearestIsGallery()) {
-        appMode = MODE_CAPTURES;
-        selectedCapture = 0;
-        flashRefreshLabel();
-        drawText();
-        if (captureCount > 0 && selectedCaptureIsEntry()) { drawLoadingOverlay(); delay(10); drawImage(); }
-        else drawImageMessage("CAPTURES", "No captures yet");
-      } else if (selectedNearestIsCamera()) {
-        refreshNearestModeDataAndImage();
+  if (sw == HIGH && lastSW == LOW && encoderPressing) {
+    unsigned long pressDuration = now - encoderPressStartMs;
+    bool isShortPress = (!encoderLongPressHandled && pressDuration < encoderLongPressMs);
+
+    if (isShortPress && appBootstrapped && (now - lastButtonMs) > buttonDebounceMs) {
+      lastButtonMs = now;
+
+      if (appMode == MODE_NEAREST) {
+        if (selectedNearestIsGallery()) {
+          appMode = MODE_CAPTURES;
+          selectedCapture = 0;
+          flashRefreshLabel();
+          drawText();
+          if (captureCount > 0 && selectedCaptureIsEntry()) { drawLoadingOverlay(); delay(10); drawImage(); }
+          else drawImageMessage("CAPTURES", "No captures yet");
+        } else if (selectedNearestIsCamera()) {
+          refreshNearestModeDataAndImage();
+        }
+      }
+
+      else if (appMode == MODE_CAPTURES) {
+        if (selectedCaptureIsBack()) {
+          appMode = MODE_NEAREST;
+          selectedNearest = 0;
+          flashRefreshLabel();
+          drawText();
+          if (selectedNearestIsCamera()) { drawLoadingOverlay(); delay(10); drawImage(); }
+          else drawImageMessage("GALLERY");
+        } else if (selectedCaptureIsEntry()) {
+          flashRefreshLabel();
+          drawLoadingOverlay();
+          delay(10);
+          drawImage();
+        }
       }
     }
 
-    else if (appMode == MODE_CAPTURES) {
-      if (selectedCaptureIsBack()) {
-        appMode = MODE_NEAREST;
-        selectedNearest = 0;
-        flashRefreshLabel();
-        drawText();
-        if (selectedNearestIsCamera()) { drawLoadingOverlay(); delay(10); drawImage(); }
-        else drawImageMessage("GALLERY");
-      } else if (selectedCaptureIsEntry()) {
-        flashRefreshLabel();
-        drawLoadingOverlay();
-        delay(10);
-        drawImage();
-      }
-    }
+    encoderPressing = false;
+    encoderLongPressHandled = false;
   }
 
   lastSW = sw;
@@ -1670,14 +1792,24 @@ void loop() {
 
     if (provisioningCompleted) {
       stopProvisionPortal();
-      drawGpsWaitingScreen();
-      Serial.println("[APP] Provisioning complete. Waiting for GPS fix...");
+      if (appBootstrapped) {
+        drawCurrentInteractiveScreen();
+        Serial.println("[APP] Provisioning complete. Returned to interactive view.");
+      } else {
+        drawGpsWaitingScreen();
+        Serial.println("[APP] Provisioning complete. Waiting for GPS fix...");
+      }
     } else if (hasStoredCredentials &&
                millis() - provisioningStartedMs > PROVISION_SKIP_TIMEOUT_MS) {
       stopProvisionPortal();
       provisioningCompleted = true;
-      drawGpsWaitingScreen();
-      Serial.println("[APP] Provisioning skipped. Using saved/default credentials.");
+      if (appBootstrapped) {
+        drawCurrentInteractiveScreen();
+        Serial.println("[APP] Provisioning skipped. Returned to interactive view.");
+      } else {
+        drawGpsWaitingScreen();
+        Serial.println("[APP] Provisioning skipped. Using saved/default credentials.");
+      }
     }
 
     delay(2);
@@ -1688,6 +1820,7 @@ void loop() {
 
   static unsigned long lastGpsPrint = 0;
   if (!appBootstrapped) {
+    readEncoderButton();
     updateGpsWaitingAnimation();
 
     if (hasGpsFixWithCoordinates()) {
