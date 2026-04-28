@@ -1,11 +1,14 @@
 #include <SPI.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <WiFiClientSecure.h>
+#include <Preferences.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <JPEGDEC.h>
 #include <ArduinoJson.h>
-#include <TinyGPSPlus.h>
+#include <Adafruit_GPS.h>
+#include <qrcode.h>
 #include "arduino_secrets.h"
 
 // ---------- TFT ----------
@@ -24,17 +27,31 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 // ---------- GPS ----------
 #define GPS_RX_PIN D7
-#define GPS_TX_PIN D6
+#define GPS_TX_PIN -1
 
 // --- Baterry Reading ---
 #define A_PIN D0
 
-HardwareSerial GPSSerial(1);
-TinyGPSPlus gps;
+// ---------- GPS Setup ----------
+#define GPSSerial Serial1
+Adafruit_GPS GPS(&GPSSerial);
 
 // ---------- WiFi ----------
-char ssid[] = SECRET_SSID;
-char pass[] = SECRET_PASS;
+const char* DEFAULT_WIFI_SSID = SECRET_SSID;
+const char* DEFAULT_WIFI_PASS = SECRET_PASS;
+char wifiSsid[33] = {0};
+char wifiPass[65] = {0};
+
+WebServer provisionServer(80);
+Preferences prefs;
+
+const char* PROVISION_AP_SSID = "LilCam-Setup";
+const char* PROVISION_AP_PASS = "";
+const char* PROVISION_URL = "http://192.168.4.1";
+const char* PREF_NAMESPACE = "lilcam";
+const char* PREF_KEY_SSID = "wifi_ssid";
+const char* PREF_KEY_PASS = "wifi_pass";
+const unsigned long PROVISION_SKIP_TIMEOUT_MS = 15000;
 
 // ---------- Direct API ----------
 const char* API_HOST = "webcams.nyctmc.org";
@@ -44,7 +61,7 @@ const char* CAMERA_LIST_PATH = "/api/cameras";
 // ---------- Location ----------
 float userLat = 40.69234f;
 float userLon = -73.987453f;
-bool hasLocation = true;
+bool hasLocation = false;
 
 float lastFetchLat = 0.0f;
 float lastFetchLon = 0.0f;
@@ -117,6 +134,17 @@ const unsigned long buttonDebounceMs = 180;
 
 JPEGDEC jpeg;
 
+bool appBootstrapped = false;
+bool provisioningActive = false;
+bool provisioningCompleted = false;
+bool hasStoredCredentials = false;
+bool gpsWaitingScreenDrawn = false;
+bool gpsSearchTextVisible = true;
+unsigned long gpsBlinkMs = 0;
+unsigned long provisioningStartedMs = 0;
+const unsigned long GPS_BLINK_INTERVAL_MS = 450;
+const unsigned long BOOT_SPLASH_MS = 1000;
+
 // ---------- Network JPEG ----------
 struct NetJPEGFile {
   WiFiClientSecure client;
@@ -174,6 +202,141 @@ void safeCopy(char* dst, size_t dstSize, const char* src) {
   }
   strncpy(dst, src, dstSize - 1);
   dst[dstSize - 1] = '\0';
+}
+
+void applyDefaultWifiCredentials() {
+  safeCopy(wifiSsid, sizeof(wifiSsid), DEFAULT_WIFI_SSID);
+  safeCopy(wifiPass, sizeof(wifiPass), DEFAULT_WIFI_PASS);
+}
+
+void loadProvisionedCredentials() {
+  applyDefaultWifiCredentials();
+  hasStoredCredentials = false;
+
+  if (!prefs.begin(PREF_NAMESPACE, true)) {
+    Serial.println("[PROVISION] Preferences open failed (read). Using defaults.");
+    return;
+  }
+
+  String savedSsid = prefs.getString(PREF_KEY_SSID, "");
+  String savedPass = prefs.getString(PREF_KEY_PASS, "");
+  prefs.end();
+
+  if (savedSsid.length() > 0) {
+    safeCopy(wifiSsid, sizeof(wifiSsid), savedSsid.c_str());
+    safeCopy(wifiPass, sizeof(wifiPass), savedPass.c_str());
+    hasStoredCredentials = true;
+    Serial.print("[PROVISION] Loaded saved SSID: ");
+    Serial.println(wifiSsid);
+  } else {
+    hasStoredCredentials = (strlen(wifiSsid) > 0);
+    Serial.println("[PROVISION] No saved credentials. Using defaults.");
+  }
+}
+
+bool saveProvisionedCredentials(const String& ssidValue, const String& passValue) {
+  if (ssidValue.length() == 0) return false;
+  if (!prefs.begin(PREF_NAMESPACE, false)) {
+    Serial.println("[PROVISION] Preferences open failed (write).");
+    return false;
+  }
+
+  size_t writtenSsid = prefs.putString(PREF_KEY_SSID, ssidValue);
+  size_t writtenPass = prefs.putString(PREF_KEY_PASS, passValue);
+  prefs.end();
+
+  bool ok1 = (writtenSsid == ssidValue.length());
+  bool ok2 = (writtenPass == passValue.length());
+  if (!(ok1 && ok2)) return false;
+
+  safeCopy(wifiSsid, sizeof(wifiSsid), ssidValue.c_str());
+  safeCopy(wifiPass, sizeof(wifiPass), passValue.c_str());
+  hasStoredCredentials = true;
+  return true;
+}
+
+String provisioningPageHtml() {
+  String html =
+    "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>LilCam Setup</title>"
+    "<style>"
+    "body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f7f7f7;padding:24px;color:#111}"
+    "main{max-width:420px;margin:0 auto;background:#fff;padding:20px;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.08)}"
+    "h1{font-size:1.3rem;margin:0 0 8px 0}p{margin:0 0 16px 0;color:#444}"
+    "label{display:block;font-size:.92rem;margin:10px 0 6px}"
+    "input{width:100%;padding:10px;border:1px solid #d0d0d0;border-radius:10px;font-size:1rem;box-sizing:border-box}"
+    "button{margin-top:14px;width:100%;padding:12px;border:none;border-radius:10px;background:#111;color:#fff;font-weight:600}"
+    "#status{margin-top:12px;font-size:.92rem;color:#0b7a2b;min-height:20px}"
+    "</style></head><body><main>"
+    "<h1>LilCam Wi-Fi Setup</h1><p>Enter your Wi-Fi credentials to provision this device.</p>"
+    "<form id='f'>"
+    "<label for='ssid'>Wi-Fi</label><input id='ssid' name='ssid' maxlength='32' required>"
+    "<label for='password'>Wi-Fi Password</label><input id='password' name='password' type='password' maxlength='64'>"
+    "<button type='submit'>Save & Connect</button></form><div id='status'></div>"
+    "</main><script>"
+    "const f=document.getElementById('f');const s=document.getElementById('status');"
+    "f.addEventListener('submit',async(e)=>{e.preventDefault();"
+    "const d=new URLSearchParams(new FormData(f));"
+    "s.textContent='Saving...';"
+    "const r=await fetch('/provision',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:d.toString()});"
+    "s.textContent=await r.text();"
+    "});"
+    "</script></body></html>";
+  return html;
+}
+
+void handleProvisionRoot() {
+  provisionServer.send(200, "text/html", provisioningPageHtml());
+}
+
+void handleProvisionSubmit() {
+  String newSsid = provisionServer.arg("ssid");
+  String newPass = provisionServer.arg("password");
+  newSsid.trim();
+
+  if (newSsid.length() == 0) {
+    provisionServer.send(400, "text/plain", "SSID is required.");
+    return;
+  }
+
+  if (!saveProvisionedCredentials(newSsid, newPass)) {
+    provisionServer.send(500, "text/plain", "Failed to save credentials.");
+    return;
+  }
+
+  provisioningCompleted = true;
+  Serial.print("[PROVISION] Received credentials for SSID: ");
+  Serial.println(wifiSsid);
+  provisionServer.send(200, "text/plain", "Saved. Device will now continue startup.");
+}
+
+void startProvisionPortal() {
+  Serial.println("[PROVISION] Starting AP portal...");
+  WiFi.mode(WIFI_AP_STA);
+  if (strlen(PROVISION_AP_PASS) >= 8) WiFi.softAP(PROVISION_AP_SSID, PROVISION_AP_PASS);
+  else                                WiFi.softAP(PROVISION_AP_SSID);
+
+  IPAddress apIp = WiFi.softAPIP();
+  Serial.print("[PROVISION] AP SSID: ");
+  Serial.println(PROVISION_AP_SSID);
+  Serial.print("[PROVISION] AP IP: ");
+  Serial.println(apIp);
+
+  provisionServer.on("/", HTTP_GET, handleProvisionRoot);
+  provisionServer.on("/provision", HTTP_POST, handleProvisionSubmit);
+  provisionServer.onNotFound(handleProvisionRoot);
+  provisionServer.begin();
+
+  provisioningActive = true;
+  provisioningStartedMs = millis();
+}
+
+void stopProvisionPortal() {
+  if (!provisioningActive) return;
+  provisionServer.stop();
+  WiFi.softAPdisconnect(true);
+  provisioningActive = false;
+  Serial.println("[PROVISION] AP portal stopped.");
 }
 
 void clearNearestList() {
@@ -345,19 +508,28 @@ void pumpGPS(unsigned long durationMs = 0) {
   unsigned long start = millis();
 
   do {
+    bool readAny = false;
+
     while (GPSSerial.available()) {
-      gps.encode(GPSSerial.read());
+      GPS.read();
+      readAny = true;
+
+      if (GPS.newNMEAreceived()) {
+        GPS.parse(GPS.lastNMEA());
+      }
     }
-    delay(1);
+
+    if (durationMs == 0) break;
+    if (!readAny) delay(1);
   } while (durationMs > 0 && millis() - start < durationMs);
 }
 
 bool refreshLocation() {
   pumpGPS(1200);
 
-  if (gps.location.isValid() && gps.location.age() < 10000) {
-    userLat = gps.location.lat();
-    userLon = gps.location.lng();
+  if (GPS.fix) {
+    userLat = GPS.latitudeDegrees;
+    userLon = GPS.longitudeDegrees;
     hasLocation = true;
 
     Serial.print("GPS fix: ");
@@ -365,16 +537,20 @@ bool refreshLocation() {
     Serial.print(", ");
     Serial.print(userLon, 6);
     Serial.print("  sats=");
-    Serial.println(gps.satellites.isValid() ? gps.satellites.value() : 0);
+    Serial.println((int)GPS.satellites);
     return true;
   }
 
-  hasLocation = true;
-  Serial.print("No GPS fix. Fallback: ");
-  Serial.print(userLat, 6);
-  Serial.print(", ");
-  Serial.println(userLon, 6);
-  return true;
+  if (hasLocation) {
+    Serial.print("No GPS fix. Using last known location: ");
+    Serial.print(userLat, 6);
+    Serial.print(", ");
+    Serial.println(userLon, 6);
+    return true;
+  }
+
+  Serial.println("No GPS fix yet and no last known location.");
+  return false;
 }
 
 // ---------- Chunked helpers ----------
@@ -834,6 +1010,230 @@ void drawImageMessage(const char* msg1, const char* msg2 = nullptr, uint16_t col
 void drawLoadingOverlay() { drawImageMessage("LOADING..."); }
 void drawSavingOverlay()  { drawImageMessage("SAVING..."); }
 
+void drawBootSplash() {
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  tft.setTextSize(4);
+
+  const char* title = "LilCam";
+  int16_t x1, y1;
+  uint16_t w, h;
+  tft.getTextBounds(title, 0, 0, &x1, &y1, &w, &h);
+  tft.setCursor((SCREEN_W - w) / 2, (SCREEN_H - h) / 2);
+  tft.print(title);
+}
+
+static int qrDrawX = 0;
+static int qrDrawY = 0;
+static int qrDrawScale = 4;
+
+void drawQrCodeDisplay(esp_qrcode_handle_t qrcode) {
+  int size = esp_qrcode_get_size(qrcode);
+  if (size <= 0) return;
+
+  const int quiet = 2;
+  int totalModules = size + quiet * 2;
+  int sizePx = totalModules * qrDrawScale;
+  tft.fillRect(qrDrawX, qrDrawY, sizePx, sizePx, ST77XX_WHITE);
+
+  for (int yy = 0; yy < size; yy++) {
+    for (int xx = 0; xx < size; xx++) {
+      uint16_t c = esp_qrcode_get_module(qrcode, xx, yy) ? ST77XX_BLACK : ST77XX_WHITE;
+      tft.fillRect(
+        qrDrawX + (xx + quiet) * qrDrawScale,
+        qrDrawY + (yy + quiet) * qrDrawScale,
+        qrDrawScale,
+        qrDrawScale,
+        c
+      );
+    }
+  }
+}
+
+void drawQrCode(int x, int y, int scale, const char* text) {
+  qrDrawX = x;
+  qrDrawY = y;
+  qrDrawScale = scale;
+
+  esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+  cfg.display_func = drawQrCodeDisplay;
+  cfg.max_qrcode_version = 6;
+  cfg.qrcode_ecc_level = ESP_QRCODE_ECC_LOW;
+  esp_qrcode_generate(&cfg, text);
+}
+
+void drawProvisioningScreen() {
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+
+  tft.setTextSize(2);
+  tft.setCursor(20, 10);
+  tft.print("Scan To Setup Wi-Fi");
+
+  int qrScale = 5;
+  int qrVersionSize = 33; // version 4 => 33 modules
+  int qrSizePx = (qrVersionSize + 4) * qrScale; // + quiet zone
+  int qrX = 8;
+  int qrY = 40;
+  tft.drawRect(qrX - 2, qrY - 2, qrSizePx + 4, qrSizePx + 4, ST77XX_WHITE);
+  drawQrCode(qrX, qrY, qrScale, PROVISION_URL);
+
+  tft.setTextSize(1);
+  tft.setCursor(186, 52);
+  tft.print("AP:");
+  tft.setCursor(186, 66);
+  tft.print(PROVISION_AP_SSID);
+  tft.setCursor(186, 88);
+  tft.print("URL:");
+  tft.setCursor(186, 102);
+  tft.print("192.168.4.1");
+  tft.setCursor(186, 134);
+  tft.print("Open page,");
+  tft.setCursor(186, 146);
+  tft.print("enter Wi-Fi,");
+  tft.setCursor(186, 158);
+  tft.print("then submit.");
+}
+
+void drawGpsWaitingScreen() {
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextWrap(false);
+
+  tft.drawRect(14, 48, SCREEN_W - 28, SCREEN_H - 96, ST77XX_WHITE);
+
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+
+  const char* line1 = "GPS Searching...";
+  int16_t x1, y1;
+  uint16_t w1, h1;
+  tft.getTextBounds(line1, 0, 0, &x1, &y1, &w1, &h1);
+  tft.setCursor((SCREEN_W - w1) / 2, 96);
+  tft.print(line1);
+
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  const char* line2 = "Go outside!";
+  uint16_t w2, h2;
+  tft.getTextBounds(line2, 0, 0, &x1, &y1, &w2, &h2);
+  tft.setCursor((SCREEN_W - w2) / 2, 132);
+  tft.print(line2);
+
+  tft.setTextSize(1);
+  tft.setCursor(84, 168);
+  tft.print("Sats: 0  Q:0");
+
+  gpsWaitingScreenDrawn = true;
+  gpsSearchTextVisible = true;
+  gpsBlinkMs = millis();
+}
+
+void updateGpsWaitingAnimation() {
+  if (!gpsWaitingScreenDrawn) {
+    drawGpsWaitingScreen();
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - gpsBlinkMs < GPS_BLINK_INTERVAL_MS) return;
+  gpsBlinkMs = now;
+  gpsSearchTextVisible = !gpsSearchTextVisible;
+
+  tft.fillRect(28, 92, SCREEN_W - 56, 24, ST77XX_BLACK);
+  tft.setTextSize(2);
+  tft.setTextColor(gpsSearchTextVisible ? ST77XX_YELLOW : ST77XX_BLACK, ST77XX_BLACK);
+
+  const char* line1 = "GPS Searching...";
+  int16_t x1, y1;
+  uint16_t w1, h1;
+  tft.getTextBounds(line1, 0, 0, &x1, &y1, &w1, &h1);
+  tft.setCursor((SCREEN_W - w1) / 2, 96);
+  tft.print(line1);
+
+  char satBuf[24];
+  snprintf(satBuf, sizeof(satBuf), "Sats: %d  Q:%d", (int)GPS.satellites, (int)GPS.fixquality);
+  tft.fillRect(72, 164, 136, 12, ST77XX_BLACK);
+  tft.setTextSize(1);
+  tft.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  tft.setCursor(84, 168);
+  tft.print(satBuf);
+}
+
+bool hasGpsFixWithCoordinates() {
+  return GPS.fix;
+}
+
+void connectWifi() {
+  Serial.println("[WiFi] Setting mode to STA...");
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  delay(300);
+  Serial.print("[WiFi] Connecting to SSID: ");
+  Serial.println(wifiSsid);
+  WiFi.begin(wifiSsid, wifiPass);
+
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 20000) {
+    logWifiStatus("[WiFi] Waiting:");
+    delay(500);
+  }
+
+  wifiConnected = (WiFi.status() == WL_CONNECTED);
+  if (wifiConnected) {
+    Serial.println("[WiFi] Connected!");
+    Serial.print("[WiFi] IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("[WiFi] RSSI: ");
+    Serial.println(WiFi.RSSI());
+  } else {
+    Serial.println("[WiFi] FAILED to connect within 20s");
+    logWifiStatus("[WiFi] Final status:");
+  }
+}
+
+void bootstrapAppAfterGpsFix() {
+  if (appBootstrapped) return;
+  appBootstrapped = true;
+  stopProvisionPortal();
+
+  userLat = GPS.latitudeDegrees;
+  userLon = GPS.longitudeDegrees;
+  hasLocation = true;
+
+  Serial.print("[GPS] First valid fix acquired: ");
+  Serial.print(userLat, 6);
+  Serial.print(", ");
+  Serial.println(userLon, 6);
+
+  connectWifi();
+
+  clearNearestList();
+  drawAllBars();
+
+  if (wifiConnected) {
+    Serial.println("[APP] Fetching nearest cameras...");
+    fetchNearestCamerasDirect();
+  } else {
+    Serial.println("[APP] Skipping fetch, no WiFi");
+  }
+
+  drawText();
+
+  if (selectedNearestIsCamera()) {
+    Serial.println("[APP] Drawing first camera image...");
+    drawImage();
+  } else {
+    Serial.println("[APP] No cameras found, showing placeholder");
+    drawImageMessage("NO CAMERAS", "Press refresh");
+  }
+
+  lastCLK        = digitalRead(ENC_CLK);
+  lastSW         = digitalRead(ENC_SW);
+  lastCaptureBtn = digitalRead(CAPTURE_BTN);
+
+  Serial.println("[APP] Setup complete. Entering interactive mode.");
+}
+
 // ---------- Captures ----------
 void saveCurrentCapture() {
   if (!selectedNearestIsCamera()) return;
@@ -1202,17 +1602,8 @@ void setup() {
 
   tft.setRotation(1);
   tft.setTextWrap(false);
-  Serial.println("[LCD] Filling screen RED (display test)...");
-  tft.fillScreen(ST77XX_RED);
-  delay(400);
-  Serial.println("[LCD] Filling screen GREEN...");
-  tft.fillScreen(ST77XX_GREEN);
-  delay(400);
-  Serial.println("[LCD] Filling screen BLUE...");
-  tft.fillScreen(ST77XX_BLUE);
-  delay(400);
-  tft.fillScreen(ST77XX_BLACK);
-  Serial.println("[LCD] Display test done. If you saw R/G/B, LCD is working.");
+  drawBootSplash();
+  delay(BOOT_SPLASH_MS);
 
   // ---- Encoder ----
   Serial.println("[ENC] Configuring encoder pins...");
@@ -1234,52 +1625,14 @@ void setup() {
   Serial.println(digitalRead(CAPTURE_BTN));
 
   // ---- GPS ----
-  Serial.println("[GPS] Starting UART1 at 9600 baud, RX=D7...");
+  Serial.println("[GPS] Starting UART1 at 9600 baud, RX=D7 (TX disabled)...");
   GPSSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  Serial.println("[GPS] GPSSerial started. Waiting briefly for chars...");
+  GPS.begin(9600);
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  GPS.sendCommand(PGCMD_ANTENNA);
+  Serial.println("[GPS] Adafruit GPS initialized");
   delay(500);
-  int gpsChars = 0;
-  unsigned long gpsCheck = millis();
-  while (millis() - gpsCheck < 500) {
-    while (GPSSerial.available()) {
-      GPSSerial.read();
-      gpsChars++;
-    }
-  }
-  Serial.print("[GPS] Chars received in 500ms: ");
-  Serial.println(gpsChars);
-  if (gpsChars == 0) {
-    Serial.println("[GPS] WARNING: No GPS data yet. Check wiring: GPS TX -> D7");
-  } else {
-    Serial.println("[GPS] GPS data flowing OK");
-  }
-
-  // ---- WiFi ----
-  Serial.println("[WiFi] Setting mode to STA...");
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true);
-  delay(300);
-  Serial.print("[WiFi] Connecting to SSID: ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, pass);
-
-  unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 20000) {
-    logWifiStatus("[WiFi] Waiting:");
-    delay(500);
-  }
-
-  wifiConnected = (WiFi.status() == WL_CONNECTED);
-  if (wifiConnected) {
-    Serial.println("[WiFi] Connected!");
-    Serial.print("[WiFi] IP: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("[WiFi] RSSI: ");
-    Serial.println(WiFi.RSSI());
-  } else {
-    Serial.println("[WiFi] FAILED to connect within 20s");
-    logWifiStatus("[WiFi] Final status:");
-  }
 
 // --- Battery Reading ---
 // float readBattery() {
@@ -1292,64 +1645,86 @@ void setup() {
 //   return constrain((int)((v - 3.3) / (4.2 - 3.3) * 100), 0, 100);
 // }
 
-  // ---- App init ----
-  clearNearestList();
-  drawAllBars();
-
-  if (wifiConnected) {
-    Serial.println("[APP] Refreshing location...");
-    refreshLocation();
-    Serial.println("[APP] Fetching nearest cameras...");
-    fetchNearestCamerasDirect();
-  } else {
-    Serial.println("[APP] Skipping fetch, no WiFi");
-  }
-
-  drawText();
-
-  if (selectedNearestIsCamera()) {
-    Serial.println("[APP] Drawing first camera image...");
-    drawImage();
-  } else {
-    Serial.println("[APP] No cameras found, showing placeholder");
-    drawImageMessage("NO CAMERAS", "Press refresh");
-  }
+  loadProvisionedCredentials();
+  startProvisionPortal();
+  drawProvisioningScreen();
 
   lastCLK        = digitalRead(ENC_CLK);
   lastSW         = digitalRead(ENC_SW);
   lastCaptureBtn = digitalRead(CAPTURE_BTN);
 
-  Serial.println("[APP] Setup complete. Entering loop.");
+  if (hasStoredCredentials) {
+    Serial.println("[APP] Provision portal active. Submit new Wi-Fi or wait to continue with saved credentials.");
+  } else {
+    Serial.println("[APP] Provision portal active. Waiting for Wi-Fi form submission.");
+  }
   Serial.println("=============================");
 }
 
 // ---------- Loop ----------
 void loop() {
+  if (!provisioningCompleted) {
+    if (provisioningActive) {
+      provisionServer.handleClient();
+    }
+
+    if (provisioningCompleted) {
+      stopProvisionPortal();
+      drawGpsWaitingScreen();
+      Serial.println("[APP] Provisioning complete. Waiting for GPS fix...");
+    } else if (hasStoredCredentials &&
+               millis() - provisioningStartedMs > PROVISION_SKIP_TIMEOUT_MS) {
+      stopProvisionPortal();
+      provisioningCompleted = true;
+      drawGpsWaitingScreen();
+      Serial.println("[APP] Provisioning skipped. Using saved/default credentials.");
+    }
+
+    delay(2);
+    return;
+  }
+
   pumpGPS();
 
   static unsigned long lastGpsPrint = 0;
+  if (!appBootstrapped) {
+    updateGpsWaitingAnimation();
+
+    if (hasGpsFixWithCoordinates()) {
+      bootstrapAppAfterGpsFix();
+    } else if (millis() - lastGpsPrint > 1000) {
+      lastGpsPrint = millis();
+      Serial.print("No GPS fix yet... sats=");
+      Serial.print((int)GPS.satellites);
+      Serial.print(" fixquality=");
+      Serial.println((int)GPS.fixquality);
+    }
+    return;
+  }
+
   if (millis() - lastGpsPrint > 1000) {
     lastGpsPrint = millis();
 
-    Serial.print("GPS chars=");
-    Serial.print(gps.charsProcessed());
-    Serial.print(" valid=");
-    Serial.print(gps.location.isValid());
-    Serial.print(" age=");
-    Serial.print(gps.location.age());
-    Serial.print(" sats=");
-    Serial.print(gps.satellites.isValid() ? gps.satellites.value() : 0);
+    if (GPS.fix) {
+      Serial.print("Lat: ");
+      Serial.print(GPS.latitudeDegrees, 6);
+      Serial.print(" | Lon: ");
+      Serial.print(GPS.longitudeDegrees, 6);
+      Serial.print(" | Alt: ");
+      Serial.print(GPS.altitude);
+      Serial.print("m");
+      Serial.print(" | Speed: ");
+      Serial.print(GPS.speed * 1.852, 1);
+      Serial.print("km/h");
+      Serial.print(" | Sats: ");
+      Serial.println((int)GPS.satellites);
 
-    if (gps.location.isValid()) {
-      userLat = gps.location.lat();
-      userLon = gps.location.lng();
+      userLat = GPS.latitudeDegrees;
+      userLon = GPS.longitudeDegrees;
       hasLocation = true;
-      Serial.print(" lat=");
-      Serial.print(userLat, 6);
-      Serial.print(" lon=");
-      Serial.print(userLon, 6);
+    } else {
+      Serial.println("No GPS fix yet...");
     }
-    Serial.println();
   }
 
   bool nowConnected = (WiFi.status() == WL_CONNECTED);
