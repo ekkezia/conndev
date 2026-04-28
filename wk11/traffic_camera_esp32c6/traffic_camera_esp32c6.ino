@@ -15,7 +15,7 @@
 #define TFT_CS   D3
 #define TFT_DC   D2
 #define TFT_RST  D1
-#define TFT_BL   D0
+// #define TFT_BL   D0
 
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
@@ -30,6 +30,9 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 // Wire GPS TX -> XIAO D7. GPS RX can stay unconnected.
 #define GPS_RX_PIN D7
 #define GPS_TX_PIN -1
+
+// --- Baterry Reading ---
+#define A_PIN D0
 
 HardwareSerial GPSSerial(1);
 TinyGPSPlus gps;
@@ -1523,6 +1526,17 @@ void readCaptureButton() {
   lastCaptureBtn = btn;
 }
 
+// --- Battery Reading ---
+float readBattery() {
+  int raw = analogRead(A_PIN);
+  float voltage = (raw / 4095.0) * 3.3 * 2.0; // *2 because of divider
+  return voltage; // LiPo: ~4.2V full, ~3.3V empty
+}
+
+int batteryPercent(float v) {
+  return constrain((int)((v - 3.3) / (4.2 - 3.3) * 100), 0, 100);
+}
+
 // ---------- SETUP ----------
 void setup() {
   Serial.begin(115200);
@@ -1646,4 +1660,5 @@ void loop() {
   readEncoder();
   readEncoderButton();
   readCaptureButton();
+  readBattery();
 }
