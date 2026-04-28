@@ -12,7 +12,7 @@
 #define TFT_CS   D3
 #define TFT_DC   D2
 #define TFT_RST  D1
-// #define TFT_BL   D0
+#define TFT_BL   D0
 
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
@@ -1282,15 +1282,15 @@ void setup() {
   }
 
 // --- Battery Reading ---
-float readBattery() {
-  int raw = analogRead(A_PIN);
-  float voltage = (raw / 4095.0) * 3.3 * 2.0; // *2 because of divider
-  return voltage; // LiPo: ~4.2V full, ~3.3V empty
-}
+// float readBattery() {
+//   int raw = analogRead(A_PIN);
+//   float voltage = (raw / 4095.0) * 3.3 * 2.0; // *2 because of divider
+//   return voltage; // LiPo: ~4.2V full, ~3.3V empty
+// }
 
-int batteryPercent(float v) {
-  return constrain((int)((v - 3.3) / (4.2 - 3.3) * 100), 0, 100);
-}
+// int batteryPercent(float v) {
+//   return constrain((int)((v - 3.3) / (4.2 - 3.3) * 100), 0, 100);
+// }
 
   // ---- App init ----
   clearNearestList();
@@ -1362,10 +1362,10 @@ void loop() {
   readEncoder();
   readEncoderButton();
   readCaptureButton();
-  readBattery();
+  // readBattery();
 
-  Serial.print("CLK="); Serial.print(digitalRead(ENC_CLK));
-  Serial.print(" DT=");  Serial.print(digitalRead(ENC_DT));
-  Serial.print(" SW=");  Serial.println(digitalRead(ENC_SW));
-  delay(200);
+  // Serial.print("CLK="); Serial.print(digitalRead(ENC_CLK));
+  // Serial.print(" DT=");  Serial.print(digitalRead(ENC_DT));
+  // Serial.print(" SW=");  Serial.println(digitalRead(ENC_SW));
+  // delay(200);
 }
