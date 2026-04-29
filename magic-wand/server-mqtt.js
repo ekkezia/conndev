@@ -25,7 +25,7 @@ app.use(express.static(path.join(__dirname, 'dashboard/build')));
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
 // Problem: the Render server is super slow and laggy
-const IS_LOCAL = true;
+const IS_LOCAL = false;
 console.log(
 	`🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`,
 );
@@ -272,11 +272,146 @@ const MQTT_SUBTOPIC = {
 	CLICK: 'click',
 	POWER: 'power',
 };
+const MQTT_TOPIC_TEST = 'kezia/test';
+const MQTT_FEEDBACK_TOPIC =
+	process.env.MQTT_FEEDBACK_TOPIC || `${MQTT_TOPIC}feedback`;
 
 const mqttClient = mqtt.connect(MQTT_BROKER, {
 	username: process.env.MQTT_USER || 'public',
 	password: process.env.MQTT_PASS || 'public',
 });
+
+function parseDrawValue(raw) {
+	if (raw == null) return null;
+
+	if (typeof raw === 'object') {
+		if ('draw' in raw) return parseDrawValue(raw.draw);
+		if ('state' in raw) return parseDrawValue(raw.state);
+		if ('value' in raw) return parseDrawValue(raw.value);
+		return null;
+	}
+
+	if (typeof raw === 'boolean') return raw ? 'start' : 'stop';
+	if (typeof raw === 'number') return raw === 0 ? 'stop' : 'start';
+
+	if (typeof raw === 'string') {
+		const trimmed = raw.trim();
+
+		try {
+			const parsed = JSON.parse(trimmed);
+			if (parsed !== raw) {
+				const nested = parseDrawValue(parsed);
+				if (nested) return nested;
+			}
+		} catch {
+			// not JSON; continue with plain-string parsing
+		}
+
+		const normalized = trimmed
+			.replace(/^['"]+|['"]+$/g, '')
+			.trim()
+			.toLowerCase();
+		if (['start', 'on', 'true', '1', 'down'].includes(normalized)) {
+			return 'start';
+		}
+		if (['stop', 'off', 'false', '0', 'up'].includes(normalized)) {
+			return 'stop';
+		}
+	}
+
+	return null;
+}
+
+function sendMqttFeedbackMessage(message, source = 'socket') {
+	if (!mqttClient.connected) {
+		console.warn(
+			`⚠️ MQTT feedback skipped (${message}) - broker connection is offline.`,
+		);
+		return;
+	}
+
+	mqttClient.publish(MQTT_FEEDBACK_TOPIC, message, (err) => {
+		if (err) {
+			console.error(`❌ Failed to publish MQTT feedback: ${err.message}`);
+			return;
+		}
+
+		console.log(`📤 MQTT feedback (${source}) -> ${MQTT_FEEDBACK_TOPIC} | ${message}`);
+	});
+}
+
+function sendBeatFeedbackToWand(state, source = 'socket') {
+	sendMqttFeedbackMessage(
+		JSON.stringify({
+			type: 'beat_hit',
+			state,
+			source,
+			timestamp: Date.now(),
+		}),
+		source,
+	);
+}
+
+async function handleSensorEntry(entry, label = 'MQTT') {
+	if (!entry) return;
+
+	io.emit('sensor-realtime-receive', entry);
+
+	if (currentSessionIndex !== null && !IS_LOCAL) {
+		console.log(`📝 Received ${label} data, writing to session ${currentSessionIndex}`);
+
+		try {
+			const snapshot = await get(ref(db, 'sessions'));
+			let sessions = [];
+
+			if (snapshot.exists()) {
+				const data = snapshot.val();
+				if (typeof data === 'object' && !Array.isArray(data)) {
+					sessions = Object.values(data);
+				} else if (Array.isArray(data)) {
+					sessions = data;
+				}
+			}
+
+			console.log(
+				`Sessions in DB: ${sessions.length}, Current index: ${currentSessionIndex}`,
+			);
+
+			if (sessions[currentSessionIndex]) {
+				console.log(`   Session found: ${sessions[currentSessionIndex].id}`);
+				if (!sessions[currentSessionIndex].data) {
+					sessions[currentSessionIndex].data = {};
+				}
+
+				if (
+					typeof sessions[currentSessionIndex].data === 'object' &&
+					!Array.isArray(sessions[currentSessionIndex].data)
+				) {
+					const dataLength = Object.keys(sessions[currentSessionIndex].data).length;
+					sessions[currentSessionIndex].data[dataLength] = entry;
+				} else {
+					sessions[currentSessionIndex].data.push(entry);
+				}
+
+				await set(ref(db, 'sessions'), sessions)
+					.then(() => console.log('   ✅ Data written to Firebase'))
+					.catch((err) =>
+						console.error(`   ❌ Firebase write error: ${err.message}`),
+					);
+			} else {
+				console.warn(
+					`⚠️ Session ${currentSessionIndex} not found in DB (${sessions.length} sessions exist)`,
+				);
+			}
+		} catch (err) {
+			console.error(`${label} Firebase write error:`, err.message);
+		}
+	} else if (currentSessionIndex !== null && IS_LOCAL) {
+		console.log(`📡 ${label} data received (local mode - Firebase writes skipped)`);
+	} else {
+		console.log(`📡 ${label} data received but no active session (power is OFF)`);
+	}
+}
 
 mqttClient.on('connect', () => {
 	console.log('📡 Connected to MQTT broker:', MQTT_BROKER);
@@ -286,131 +421,77 @@ mqttClient.on('connect', () => {
 			else console.log(`📥 Subscribed: ${MQTT_TOPIC + sub}`);
 		});
 	}
-
-	mqttClient.on('message', async (topic, message) => {
-		// --- sensor data ---
-		if (topic.includes(MQTT_SUBTOPIC.DATA)) {
-			try {
-				const parsed = JSON.parse(message.toString());
-				const entry = processSensorData(parsed, 'mqtt');
-
-				if (!entry) return;
-
-				// console.log('📥 Emitting to clients', entry);
-				io.emit('sensor-realtime-receive', entry);
-
-				// Write directly to Firebase if session is active (skip if local)
-				if (currentSessionIndex !== null && !IS_LOCAL) {
-					console.log(
-						`📝 Received MQTT data, writing to session ${currentSessionIndex}`,
-					);
-					const snapshot = await get(ref(db, 'sessions'));
-					let sessions = [];
-
-					if (snapshot.exists()) {
-						const data = snapshot.val();
-						// Firebase stores arrays as objects with numeric keys - convert to array
-						if (typeof data === 'object' && !Array.isArray(data)) {
-							sessions = Object.values(data);
-						} else if (Array.isArray(data)) {
-							sessions = data;
-						}
-					}
-
-					console.log(
-						`Sessions in DB: ${sessions.length}, Current index: ${currentSessionIndex}`,
-					);
-
-					if (sessions[currentSessionIndex]) {
-						console.log(
-							`   Session found: ${sessions[currentSessionIndex].id}`,
-						);
-						if (!sessions[currentSessionIndex].data) {
-							sessions[currentSessionIndex].data = {};
-						}
-						// Firebase converts objects with numeric keys to/from arrays
-						if (
-							typeof sessions[currentSessionIndex].data === 'object' &&
-							!Array.isArray(sessions[currentSessionIndex].data)
-						) {
-							// It's a Firebase object - add entry with auto-generated key
-							const dataLength = Object.keys(
-								sessions[currentSessionIndex].data,
-							).length;
-							sessions[currentSessionIndex].data[dataLength] = entry;
-						} else {
-							// It's an array - push normally
-							sessions[currentSessionIndex].data.push(entry);
-						}
-
-						await set(ref(db, 'sessions'), sessions)
-							.then(() => console.log(`   ✅ Data written to Firebase`))
-							.catch((err) =>
-								console.error(`   ❌ Firebase write error: ${err.message}`),
-							);
-					} else {
-						console.warn(
-							`⚠️ Session ${currentSessionIndex} not found in DB (${sessions.length} sessions exist)`,
-						);
-					}
-				} else if (currentSessionIndex !== null && IS_LOCAL) {
-					console.log(
-						`📡 MQTT data received (local mode - Firebase writes skipped)`,
-					);
-				} else {
-					console.log(
-						`📡 MQTT data received but no active session (power is OFF)`,
-					);
-				}
-			} catch (err) {
-				console.error('MQTT data parse error:', err.message);
-			}
-		}
-
-		// --- POWER ---
-		if (topic.includes(MQTT_SUBTOPIC.POWER)) {
-			let parsed;
-			try {
-				parsed = JSON.parse(message.toString());
-			} catch (err) {
-				console.error('MQTT power parse error:', err.message);
-				return;
-			}
-
-			if (parsed.power !== undefined) {
-				const wasEnabled = mouseEnabled;
-				mouseEnabled = parsed.power === true;
-				console.log(`🖱 Power: ${mouseEnabled ? 'ON' : 'OFF'}`);
-				if (!wasEnabled && mouseEnabled) startNewSession();
-				else if (wasEnabled && !mouseEnabled) endSession();
-			}
-		}
-
-		// --- CONTROL ---
-		// draw: "start" | "stop"
-		if (topic.includes(MQTT_SUBTOPIC.DRAW)) {
-			const value = message.toString().replace(/"/g, '').trim(); // strip quotes → "start" or "stop"
-			drawState = value;
-			io.emit('sensor-draw', { draw: value, timestamp: Date.now() });
-			console.log(`✍🏻 Draw: ${value}`);
-		}
-
-		// click: true (one-time)
-		if (topic.includes(MQTT_SUBTOPIC.CLICK)) {
-			let parsed;
-			try {
-				parsed = JSON.parse(message.toString());
-				io.emit('sensor-click', { timestamp: Date.now() });
-				console.log('🖱 Click relayed');
-			} catch (err) {
-				console.error('MQTT click parse error:', err.message);
-				return;
-			}
-		}
-	});
-
-	mqttClient.on('error', (err) => console.error('MQTT error:', err));
 });
+
+mqttClient.on('message', async (topic, message) => {
+	// --- sensor data ---
+	if (topic === `${MQTT_TOPIC}${MQTT_SUBTOPIC.DATA}`) {
+		try {
+			const parsed = JSON.parse(message.toString());
+			const entry = processSensorData(parsed, 'mqtt');
+			await handleSensorEntry(entry, 'MQTT');
+		} catch (err) {
+			console.error('MQTT data parse error:', err.message);
+		}
+		return;
+	}
+
+	// --- POWER ---
+	if (topic === `${MQTT_TOPIC}${MQTT_SUBTOPIC.POWER}`) {
+		let parsed;
+		try {
+			parsed = JSON.parse(message.toString());
+		} catch (err) {
+			console.error('MQTT power parse error:', err.message);
+			return;
+		}
+
+		if (parsed?.power !== undefined) {
+			const wasEnabled = mouseEnabled;
+			mouseEnabled = parsed.power === true;
+			console.log(`🖱 Power: ${mouseEnabled ? 'ON' : 'OFF'}`);
+			if (!wasEnabled && mouseEnabled) startNewSession();
+			else if (wasEnabled && !mouseEnabled) endSession();
+		}
+		return;
+	}
+
+	// --- CONTROL ---
+	if (topic === `${MQTT_TOPIC}${MQTT_SUBTOPIC.DRAW}`) {
+		const parsedValue = parseDrawValue(message.toString());
+		if (!parsedValue) {
+			console.warn(`Unknown draw value from MQTT: ${message.toString()}`);
+			return;
+		}
+
+		drawState = parsedValue;
+		io.emit('sensor-draw', { draw: parsedValue, timestamp: Date.now() });
+		console.log(`✍🏻 Draw: ${parsedValue}`);
+		return;
+	}
+
+	// --- CLICK ---
+	if (topic === `${MQTT_TOPIC}${MQTT_SUBTOPIC.CLICK}`) {
+		try {
+			JSON.parse(message.toString());
+			io.emit('sensor-click', { timestamp: Date.now() });
+			console.log('🖱 Click relayed');
+		} catch (err) {
+			console.error('MQTT click parse error:', err.message);
+			return;
+		}
+		return;
+	}
+
+	if (topic === MQTT_TOPIC_TEST) {
+		console.log(`🧪 Test message (${topic}): ${message.toString()}`);
+		return;
+	}
+
+	console.warn(`Unknown MQTT topic: ${topic}`);
+});
+
+mqttClient.on('error', (err) => console.error('MQTT error:', err));
 
 // ===============================
 // Socket.IO
@@ -473,6 +554,36 @@ io.on('connection', async (socket) => {
 		processSensorData(parsed, 'socket');
 	});
 
+	socket.on('beat-hit', (data = {}) => {
+		const state = data?.perfect === true ? 'perfect' : 'hit';
+		sendBeatFeedbackToWand(state, 'beat-hit');
+	});
+
+	socket.on('beat-miss', () => {
+		sendBeatFeedbackToWand('missed', 'beat-miss');
+	});
+
+	socket.on('ui-hover', () => {
+		sendMqttFeedbackMessage(
+			JSON.stringify({
+				type: 'hover',
+				source: 'ui-hover',
+				timestamp: Date.now(),
+			}),
+			'ui-hover',
+		);
+	});
+
+	socket.on('ui-click', () => {
+		sendMqttFeedbackMessage(
+			JSON.stringify({
+				type: 'click',
+				source: 'ui-click',
+				timestamp: Date.now(),
+			}),
+			'ui-click',
+		);
+	});
 
 	// Handle manual Phillips Hue control from dashboard
 	socket.on('hue-control', (data) => {
@@ -509,7 +620,7 @@ const PHILLIPS_POWER_GX_THRESHOLD = 100; // phillips hue is powered on / off by 
 
 function sendRequest(request, requestMethod, data) {
   // add the requestURL to the front of the request:
-  url = requestUrl + request;
+  const url = requestUrl + request;
   // set the parameters:
   let params = {
     method: requestMethod, // GET, POST, PUT, DELETE, etc.
