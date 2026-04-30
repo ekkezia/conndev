@@ -11,7 +11,7 @@
 // ================= UDP =================
 WiFiUDP udp;
 
-IPAddress serverIp(10, 23, 10, 70);   // your computer IP
+IPAddress serverIp(10, 23, 31, 162);   // your computer IP
 const unsigned int serverUdpPort = 4210;
 const unsigned int localUdpPort  = 4211; // Arduino listens here for beat feedback
 
