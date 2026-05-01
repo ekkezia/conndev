@@ -11,10 +11,27 @@ export default function Remote() {
   const [motionEnabled, setMotionEnabled] = useState(false);
 
   useEffect(() => {
-    socket.current = io(REACT_APP_SERVER_URL);
+    socket.current = io(REACT_APP_SERVER_URL, {
+      path: '/socket.io',
+      multiplex: false,
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      rememberUpgrade: true,
+      timeout: 8000,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3000,
+    });
 
     socket.current.on('connect', () => setStatus('connected'));
     socket.current.on('disconnect', () => setStatus('disconnected'));
+    socket.current.on('connect_error', (err) => {
+      console.error(
+        `Remote socket connect_error (${REACT_APP_SERVER_URL}):`,
+        err?.message || err,
+      );
+    });
     socket.current.on('user', (data) => {
       console.log('User data:', data);
       if (data && data.id) setUser({ id: data.id });

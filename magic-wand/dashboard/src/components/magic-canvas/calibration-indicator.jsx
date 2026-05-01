@@ -1,4 +1,4 @@
-import { useIMU } from "../contexts/IMUContext";
+import { useIMU } from "../../contexts/IMUContext";
 import { useEffect, useState } from "react";
 
 export default function CalibrationIndicator() {

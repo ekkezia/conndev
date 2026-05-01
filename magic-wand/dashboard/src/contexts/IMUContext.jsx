@@ -29,6 +29,9 @@ export function IMUProvider({ children }) {
     bri: 0
   }); // phillips head animation state
 
+  useEffect(() => {
+    console.log('sessions updated, total sessions:', sessions.length, sensorData);
+  }, [sensorData])
   // Optional click tone to debug
   const playClickTone = useCallback(() => {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -133,7 +136,25 @@ export function IMUProvider({ children }) {
   const socket = useRef(null);
 
   useEffect(() => {
-    socket.current = io(REACT_APP_SERVER_URL);
+    socket.current = io(REACT_APP_SERVER_URL, {
+      path: '/socket.io',
+      multiplex: false,
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      rememberUpgrade: true,
+      timeout: 8000,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 3000,
+    });
+
+    socket.current.on('connect_error', (err) => {
+      console.error(
+        `Socket connect_error (${REACT_APP_SERVER_URL}):`,
+        err?.message || err,
+      );
+    });
 
     // Report screen size immediately so server can use it for mouse mapping
     socket.current.emit('screen-size', { width: window.screen.width, height: window.screen.height });
@@ -181,7 +202,15 @@ export function IMUProvider({ children }) {
       setSensorData((prev) => [...prev, entry].slice(-1000));
       // Append to the last session in sessions[]
       setSessions((prev) => {
-        if (prev.length === 0) return prev;
+        if (prev.length === 0) {
+          // If backend did not emit session-started (or initial sessions are empty),
+          // still surface realtime packets in the UI as a local live session.
+          return [{
+            id: `session_live_${Date.now()}`,
+            startTimestamp: entry?.timestamp || Date.now(),
+            data: [entry],
+          }];
+        }
         const updated = [...prev];
         const last = { ...updated[updated.length - 1] };
         last.data = [...last.data, entry].slice(-1000);

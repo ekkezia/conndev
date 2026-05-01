@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useIMU } from "../contexts/IMUContext";
+import { useIMU } from "../../contexts/IMUContext";
 import { useEffect, useRef } from "react";
 
 function GridHelperToggle() {

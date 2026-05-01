@@ -1,10 +1,10 @@
 import clsx from "clsx";
-import MenuButton from "../menu-button";
+import MenuButton from "../../menu-button";
 import { useState } from "react";
 import { useRef } from "react";
 import { useEffect } from "react";
-import { useIMU } from "../contexts/IMUContext";
-import GraphDashboard from "./playback/graph-dashboard";
+import { useIMU } from "../../contexts/IMUContext";
+import GraphDashboard from "./graph-dashboard";
 
 export default function DashboardDisplay({ className}) {
     const [isOpen, setIsOpen] = useState(false);

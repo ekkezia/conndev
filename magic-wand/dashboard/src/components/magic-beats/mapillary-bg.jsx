@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MAPILLARY_TOKEN, MAP_START } from '../config';
+import { MAPILLARY_TOKEN, MAP_START } from '../../config';
 import 'mapillary-js/dist/mapillary.css';
 
 const START = MAP_START;

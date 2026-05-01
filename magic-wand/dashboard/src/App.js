@@ -1,32 +1,27 @@
 import './App.css';
-import { useRef, useEffect, useState } from 'react';
-import { io } from 'socket.io-client';
-import { REACT_APP_SERVER_URL } from './config';
-import BeatGame from './components/beat-game';
+import BeatGame from './components/magic-beats/_index';
+import MagicCanvas from './components/magic-canvas/_index';
+import MagicSuiteLanding from './components/magic-site/_index';
 
 function App() {
-  const socket = useRef(null);
-  const [user, setUser] = useState(null);
-  const [status, setStatus] = useState('disconnected');
+  const path = (typeof window !== 'undefined' ? window.location.pathname : '/').toLowerCase();
 
-  useEffect(() => {
-    socket.current = io(REACT_APP_SERVER_URL);
-
-    socket.current.on('connect', () => setStatus('connected'));
-    socket.current.on('disconnect', () => setStatus('disconnected'));
-    socket.current.on('user', (data) => {
-      console.log('User data:', data);
-      setUser({id: data.id })
-    });
-
-    return () => socket.current.disconnect();
-  }, []);
-
-  return (
-      <div className="relative h-screen w-screen ">
+  if (path === '/magicbeats') {
+    return (
+      <div className="relative h-screen w-screen">
         <BeatGame />
       </div>
+    );
+  }
 
+  if (path === '/magic) canvas') {
+    return (
+      <MagicCanvas />
+    );
+  }
+
+  return (
+    <MagicSuiteLanding />
   );
 }
 

@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useIMU } from '../contexts/IMUContext';
+import { useIMU } from '../../contexts/IMUContext';
 import * as THREE from 'three';
 import { useRef, useEffect, useState } from 'react';
 import * as dat from 'dat.gui';

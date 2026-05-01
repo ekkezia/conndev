@@ -21,11 +21,8 @@ body {
   font-family: 'Fredoka One', 'Fredoka', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  display: flex;
-  align-items:center;
-  justify-content: center;
-  width: 100dvw;
-  height: 100dvh;
+  width: 100%;
+  min-height: 100dvh;
   background-color: var(--pink-doll);
 }
 
@@ -33,27 +30,28 @@ body {
 .retro-text,
 .retro-text * {
   font-family: 'Fredoka One', 'Fredoka', sans-serif !important;
-  background: linear-gradient(to bottom, #f07828 0%, #c84800 60%);
+  background: linear-gradient(to bottom, #ffd27a 0%, #ffb14f 45%, #f07a28 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  -webkit-text-stroke: 0.06em #3d0e00;
+  -webkit-text-stroke: 0.06em #590044;
   paint-order: stroke fill;
   text-shadow:
-    0 1px 0 #e06018,
-    0 2px 0 #c84800,
-    0 3px 0 #b03800,
-    0 4px 0 #982a00,
-    0 5px 0 #801c00,
-    0 6px 0 #601000,
-    0 7px 0 #3d0800,
-    0 8px 0 rgba(0,0,0,0.35),
-    0 10px 18px rgba(0,0,0,0.25);
+    0 1px 0 #d74db8,
+    0 2px 0 #c33ca7,
+    0 3px 0 #ad2c95,
+    0 4px 0 #972083,
+    0 5px 0 #7d1c6d,
+    0 6px 0 #641658,
+    0 8px 0 rgba(93, 22, 84, 0.74),
+    0 12px 20px rgba(35, 10, 46, 0.54);
 }
 
 /* Applied globally — every visible text inherits the retro look */
 #root {
   font-family: 'Fredoka One', 'Fredoka', sans-serif;
+  width: 100%;
+  min-height: 100dvh;
 }
 #root * {
   font-family: inherit;

@@ -17,10 +17,13 @@ const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 4000;
+const serveDashboard = process.env.SERVE_DASHBOARD === 'true';
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'dashboard/build')));
+if (serveDashboard) {
+	app.use(express.static(path.join(__dirname, 'dashboard/build')));
+}
 
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
@@ -222,6 +225,16 @@ function processSensorData(parsed, source = 'mqtt') {
 		source,
 		draw: drawState,
 	};
+}
+
+function normalizeMqttDataPayload(parsed) {
+	if (!parsed || typeof parsed !== 'object') return null;
+	// Accept direct payload: { sensor: {...}, ... }
+	if (parsed.sensor) return parsed;
+	// Accept wrapped payload used by wand UDP bridge style:
+	// { path: "kezia/imu/data", data: { sensor: {...}, ... } }
+	if (parsed.data && typeof parsed.data === 'object') return parsed.data;
+	return null;
 }
 
 // ===============================
@@ -428,7 +441,14 @@ mqttClient.on('message', async (topic, message) => {
 	if (topic === `${MQTT_TOPIC}${MQTT_SUBTOPIC.DATA}`) {
 		try {
 			const parsed = JSON.parse(message.toString());
-			const entry = processSensorData(parsed, 'mqtt');
+			const normalized = normalizeMqttDataPayload(parsed);
+			if (!normalized) {
+				console.warn(
+					`⚠️ MQTT data ignored (unexpected shape). Expected {sensor:{...}} or {data:{sensor:{...}}}. Payload: ${message.toString().slice(0, 180)}`,
+				);
+				return;
+			}
+			const entry = processSensorData(normalized, 'mqtt');
 			await handleSensorEntry(entry, 'MQTT');
 		} catch (err) {
 			console.error('MQTT data parse error:', err.message);
@@ -555,7 +575,7 @@ io.on('connection', async (socket) => {
 	});
 
 	socket.on('beat-hit', (data = {}) => {
-		const state = data?.perfect === true ? 'perfect' : 'hit';
+		const state = data?.perfect === true ? 'perfect' : 'ok';
 		sendBeatFeedbackToWand(state, 'beat-hit');
 	});
 
@@ -605,7 +625,13 @@ let address = process.env.REACT_APP_PHILLIPS_HUE_ADDRESS;
 // username on the hub:
 let username = process.env.REACT_APP_PHILLIPS_HUE_USERNAME;
 // full URL for request:
-let requestUrl = 'http://' + address + '/api/' + username + '/';
+const hasHueConfig = Boolean(
+	address &&
+	username &&
+	address !== 'undefined' &&
+	username !== 'undefined',
+);
+let requestUrl = hasHueConfig ? 'http://' + address + '/api/' + username + '/' : null;
 // light number that you want to change:
 let lightNumber = Number(process.env.REACT_APP_PHILLIPS_HUE_LIGHT_NUMBER) || 2;
 
@@ -619,6 +645,7 @@ let lastPhillipsToggle = 0; // timestamp of last toggle
 const PHILLIPS_POWER_GX_THRESHOLD = 100; // phillips hue is powered on / off by turning the magic wand hard
 
 function sendRequest(request, requestMethod, data) {
+  if (!requestUrl) return;
   // add the requestURL to the front of the request:
   const url = requestUrl + request;
   // set the parameters:
@@ -652,7 +679,11 @@ function setLight(lightNum, change) {
 }
 
 // get the state of all the lights:
-getLights();
+if (hasHueConfig) {
+	getLights();
+} else {
+	console.log('⚠️ Hue disabled: set REACT_APP_PHILLIPS_HUE_ADDRESS and REACT_APP_PHILLIPS_HUE_USERNAME');
+}
 
 // Test call to light 2 as requested:
 // setLight(lightNumber, { on: true, bri: 254, hue: 30181 });
@@ -699,6 +730,7 @@ function updatePhillipsLight(parsed, mousePos = null) {
 // ===============================
 // START
 // ===============================
-server.listen(port, () =>
-	console.log(`🌎 Server running at ${process.env.REACT_APP_SERVER_URL}`),
-);
+server.listen(port, () => {
+	const publicUrl = process.env.REACT_APP_SERVER_URL || `http://localhost:${port}`;
+	console.log(`🌎 Server running at ${publicUrl}`);
+});

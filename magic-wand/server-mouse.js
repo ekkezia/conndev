@@ -28,10 +28,13 @@ try {
 
 const app = express();
 const port = process.env.PORT || 4000;
+const serveDashboard = process.env.SERVE_DASHBOARD === 'true';
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'dashboard/build')));
+if (serveDashboard) {
+  app.use(express.static(path.join(__dirname, 'dashboard/build')));
+}
 
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
@@ -698,7 +701,7 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('beat-hit', (data = {}) => {
-    const state = data?.perfect === true ? 'perfect' : 'hit';
+    const state = data?.perfect === true ? 'perfect' : 'ok';
     sendBeatFeedbackToArduino(state, 'beat-hit');
   });
 
@@ -728,7 +731,13 @@ io.on('connection', async (socket) => {
 // ===============================
 let address = process.env.REACT_APP_PHILLIPS_HUE_ADDRESS;
 let username = process.env.REACT_APP_PHILLIPS_HUE_USERNAME;
-let requestUrl = 'http://' + address + '/api/' + username + '/';
+const hasHueConfig = Boolean(
+  address &&
+  username &&
+  address !== 'undefined' &&
+  username !== 'undefined',
+);
+let requestUrl = hasHueConfig ? 'http://' + address + '/api/' + username + '/' : null;
 let lightNumber = Number(process.env.REACT_APP_PHILLIPS_HUE_LIGHT_NUMBER) || 2;
 
 let lightState = {
@@ -741,6 +750,7 @@ let lastPhillipsToggle = 0;
 const PHILLIPS_POWER_GX_THRESHOLD = 100;
 
 function sendRequest(request, requestMethod, data) {
+  if (!requestUrl) return;
   const url = requestUrl + request;
   const params = {
     method: requestMethod,
@@ -768,7 +778,11 @@ function setLight(lightNum, change) {
   sendRequest(request, 'PUT', change);
 }
 
-getLights();
+if (hasHueConfig) {
+  getLights();
+} else {
+  console.log('⚠️ Hue disabled: set REACT_APP_PHILLIPS_HUE_ADDRESS and REACT_APP_PHILLIPS_HUE_USERNAME');
+}
 
 function updatePhillipsLight(parsed, mousePos = null) {
   if (!address || !username) {
@@ -813,7 +827,8 @@ function updatePhillipsLight(parsed, mousePos = null) {
 // START
 // ===============================
 server.listen(port, () => {
-  console.log(`🌎 Server running at ${process.env.REACT_APP_SERVER_URL}`);
+  const publicUrl = process.env.REACT_APP_SERVER_URL || `http://localhost:${port}`;
+  console.log(`🌎 Server running at ${publicUrl}`);
 });
 
 udpServer.bind(UDP_PORT, '0.0.0.0');

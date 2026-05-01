@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import paper from "paper";
-import { useIMU } from "../contexts/IMUContext";
+import { useIMU } from "../../contexts/IMUContext";
 import CalibrationIndicator from "./calibration-indicator";
 
 const UNIT = 25;
