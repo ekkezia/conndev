@@ -2,6 +2,7 @@
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include <ArduinoMqttClient.h>
+#include <Arduino_LSM6DS3.h>
 #include <Wire.h>
 #include <Adafruit_DRV2605.h>
 #include <Adafruit_NeoPixel.h>
@@ -39,9 +40,11 @@ const String deviceName = "kezia-nano33";
 const unsigned long SEND_INTERVAL      = 200;
 const unsigned long DEBOUNCE_DELAY     = 50;
 const unsigned long DRAW_SYNC_INTERVAL = 1000;
+const unsigned long DEBUG_PRINT_INTERVAL = 1000;
 unsigned long lastSendMs               = 0;
 unsigned long lastDrawSyncSend         = 0;
 unsigned long lastNtpAttempt           = 0;
+unsigned long lastDebugPrintMs         = 0;
 
 // ================= BUTTONS =================
 int drawState = LOW;
@@ -53,12 +56,12 @@ int clickBtnState = HIGH;
 int lastClickBtnState = HIGH;
 unsigned long lastClickDebounce = 0;
 
-// ================= SENSOR PLACEHOLDER =================
-// IMU removed: keep output schema with zero motion values.
+// ================= IMU =================
 float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
 int sensitivity = 5;
 bool ntpBegun = false;
 bool ntpStarted = false;
+bool imuReady = false;
 
 // ================= HAPTICS =================
 Adafruit_DRV2605 drv;
@@ -267,6 +270,33 @@ void publishSensorMqtt() {
   mqttClient.endMessage();
 }
 
+void printDebugReadings(int potRaw) {
+  Serial.print("[DBG] potRaw=");
+  Serial.print(potRaw);
+  Serial.print(" sens=");
+  Serial.print(sensitivity);
+  Serial.print(" drawBtn=");
+  Serial.print(drawBtnState);
+  Serial.print(" clickBtn=");
+  Serial.print(clickBtnState);
+  Serial.print(" drawState=");
+  Serial.print(drawState ? "start" : "stop");
+  Serial.print(" ax=");
+  Serial.print(ax, 4);
+  Serial.print(" ay=");
+  Serial.print(ay, 4);
+  Serial.print(" az=");
+  Serial.print(az, 4);
+  Serial.print(" gx=");
+  Serial.print(gx, 4);
+  Serial.print(" gy=");
+  Serial.print(gy, 4);
+  Serial.print(" gz=");
+  Serial.print(gz, 4);
+  Serial.print(" | IMU=");
+  Serial.println(imuReady ? "OK" : "NOT_READY");
+}
+
 bool connectToBroker() {
   Serial.println("Conectando a broker...");
   mqttClient.setId(clientID);
@@ -326,6 +356,14 @@ void setup() {
       clearStatusPixel();
       delay(120);
     }
+  }
+
+  if (!IMU.begin()) {
+    Serial.println("IMU init failed (Arduino_LSM6DS3)");
+    imuReady = false;
+  } else {
+    Serial.println("IMU OK (Arduino_LSM6DS3)");
+    imuReady = true;
   }
 
   Wire.begin();
@@ -391,9 +429,17 @@ void loop() {
 
   if (now - lastSendMs >= SEND_INTERVAL) {
     lastSendMs = now;
+    if (imuReady) {
+      if (IMU.accelerationAvailable()) IMU.readAcceleration(ax, ay, az);
+      if (IMU.gyroscopeAvailable()) IMU.readGyroscope(gx, gy, gz);
+    }
     int potRaw = analogRead(POT_PIN);
     sensitivity = map(potRaw, 0, 1023, 1, 10);
     publishSensorMqtt();
+    if (now - lastDebugPrintMs >= DEBUG_PRINT_INTERVAL) {
+      lastDebugPrintMs = now;
+      printDebugReadings(potRaw);
+    }
   }
 
   if (drawState && (now - lastDrawSyncSend >= DRAW_SYNC_INTERVAL)) {

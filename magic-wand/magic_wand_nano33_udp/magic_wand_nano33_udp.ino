@@ -1,6 +1,7 @@
 #include <WiFiNINA.h>
 #include <WiFiUdp.h>
 #include <NTPClient.h>
+#include <Arduino_LSM6DS3.h>
 #include <Wire.h>
 #include <Adafruit_DRV2605.h>
 #include <Adafruit_NeoPixel.h>
@@ -8,7 +9,7 @@
 
 // ================= UDP =================
 WiFiUDP udp;
-IPAddress serverIp(10, 20, 31, 162);   // updated computer/server IP
+IPAddress serverIp(10, 23, 11, 207);   // updated computer/server IP
 const unsigned int serverUdpPort = 4210;
 const unsigned int localUdpPort  = 4211; // listens for feedback
 char incomingPacket[160];
@@ -28,8 +29,10 @@ Adafruit_NeoPixel pixels(STAR_LED_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 const unsigned long SEND_INTERVAL      = 200;
 const unsigned long DEBOUNCE_DELAY     = 50;
 const unsigned long DRAW_SYNC_INTERVAL = 1000;
+const unsigned long DEBUG_PRINT_INTERVAL = 1000;
 unsigned long lastSendMs               = 0;
 unsigned long lastDrawSyncSend         = 0;
+unsigned long lastDebugPrintMs         = 0;
 
 // ================= NTP =================
 WiFiUDP ntpUDP;
@@ -48,11 +51,11 @@ int clickBtnState = HIGH;
 int lastClickBtnState = HIGH;
 unsigned long lastClickDebounce = 0;
 
-// ================= SENSOR PLACEHOLDER =================
-// Nano 33 IoT mode without IMU: keep payload shape with zero motion values.
+// ================= IMU =================
 float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
 int sensitivity = 5;
 const String deviceName = "kezia-nano33";
+bool imuReady = false;
 
 // ================= HAPTICS =================
 Adafruit_DRV2605 drv;
@@ -196,6 +199,33 @@ void publishSensorUdp() {
   Serial.println(msg);
 }
 
+void printDebugReadings(int potRaw) {
+  Serial.print("[DBG] potRaw=");
+  Serial.print(potRaw);
+  Serial.print(" sens=");
+  Serial.print(sensitivity);
+  Serial.print(" drawBtn=");
+  Serial.print(drawBtnState);
+  Serial.print(" clickBtn=");
+  Serial.print(clickBtnState);
+  Serial.print(" drawState=");
+  Serial.print(drawState ? "start" : "stop");
+  Serial.print(" ax=");
+  Serial.print(ax, 4);
+  Serial.print(" ay=");
+  Serial.print(ay, 4);
+  Serial.print(" az=");
+  Serial.print(az, 4);
+  Serial.print(" gx=");
+  Serial.print(gx, 4);
+  Serial.print(" gy=");
+  Serial.print(gy, 4);
+  Serial.print(" gz=");
+  Serial.print(gz, 4);
+  Serial.print(" | IMU=");
+  Serial.println(imuReady ? "OK" : "NOT_READY");
+}
+
 void checkUdpFeedback() {
   int packetSize = udp.parsePacket();
   if (!packetSize) return;
@@ -266,6 +296,14 @@ void setup() {
   Serial.print("Arduino UDP listening on port ");
   Serial.println(localUdpPort);
 
+  if (!IMU.begin()) {
+    Serial.println("IMU init failed (Arduino_LSM6DS3)");
+    imuReady = false;
+  } else {
+    Serial.println("IMU OK (Arduino_LSM6DS3)");
+    imuReady = true;
+  }
+
   Wire.begin(); // Nano 33 IoT: fixed SDA/SCL pins
   if (!drv.begin()) {
     Serial.println("HAPTICS DRV2605 not found");
@@ -330,9 +368,17 @@ void loop() {
 
   if (now - lastSendMs >= SEND_INTERVAL) {
     lastSendMs = now;
+    if (imuReady) {
+      if (IMU.accelerationAvailable()) IMU.readAcceleration(ax, ay, az);
+      if (IMU.gyroscopeAvailable()) IMU.readGyroscope(gx, gy, gz);
+    }
     int potRaw = analogRead(POT_PIN);
     sensitivity = map(potRaw, 0, 1023, 1, 10);
     publishSensorUdp();
+    if (now - lastDebugPrintMs >= DEBUG_PRINT_INTERVAL) {
+      lastDebugPrintMs = now;
+      printDebugReadings(potRaw);
+    }
   }
 
   if (drawState && (now - lastDrawSyncSend >= DRAW_SYNC_INTERVAL)) {
