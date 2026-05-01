@@ -15,9 +15,9 @@ const STORE_PRODUCTS = [
   },
   {
     id: "magic-wand-glitter",
-    name: "MagicWand Glitter Edition",
+    name: "MagicWand™ Glitter Edition",
     price: 149,
-    description: "Same wand core with a sparkly finish and premium gift-ready packaging.",
+    description: "The same beloved wand core with a sparkly finish and premium gift-ready packaging.",
     image: "/images/magic-wand-product.png",
   },
 ];
@@ -161,7 +161,7 @@ export default function MagicSuiteLanding() {
           </a>
           <div className="ms-menu">
             <a href="#store">Store</a>
-            <a href="#magicwand">MagicWand</a>
+            <a href="#magicwand">MagicWand™</a>
             <a href="#lilcam">LilCam</a>
             <a href="#support">Support</a>
           </div>
@@ -185,7 +185,7 @@ export default function MagicSuiteLanding() {
         <div className="ms-hero-overlay" />
         <div className="ms-hero-copy">
           <p className="ms-eyebrow">The newest addition to MagicSuite™ Family</p>
-          <h1>MagicWand</h1>
+          <h1>MagicWand™</h1>
           <p className="ms-subcopy">
             Sensitivity, click, and draw start/stop controls in one playful gesture wand.
           </p>
@@ -209,7 +209,7 @@ export default function MagicSuiteLanding() {
         </section>
         
         <section id="magicwand" className="ms-section-card">
-          <h2>MagicWand</h2>
+          <h2>MagicWand™</h2>
           <p className="ms-summary">
             Magic Wand is a wireless device that turns physical gestures into mouse control, demonstrated
             through a rhythm game where users swing to hit beats while navigating an immersive, map-based
@@ -337,7 +337,7 @@ export default function MagicSuiteLanding() {
 
         <section id="store" className="ms-section-card">
           <h2>Store</h2>
-          <p>Buy MagicWand directly and checkout below.</p>
+          <p>Buy MagicWand™ directly and checkout below.</p>
           <div className="ms-store-grid">
             <div className="ms-store-products">
               {STORE_PRODUCTS.map((product) => (
