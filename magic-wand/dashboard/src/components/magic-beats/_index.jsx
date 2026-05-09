@@ -637,6 +637,15 @@ export default function BeatGame({ className }) {
 
         const approachGroup = makeApproachGroup(bx, by, shapeType);
         const beatGroup = makeBeatGroup(bx, by, shapeType);
+        const baseHue = Math.random() * 360;
+        const colorLayerCount = Math.max(0, beatGroup.children.length - 4);
+        for (let i = 0; i < colorLayerCount; i++) {
+          beatGroup.children[i].fillColor = new paper.Color({
+            hue: (baseHue + i * 18) % 360,
+            saturation: Math.max(0.55, 0.88 - i * 0.1),
+            brightness: Math.max(0.35, 0.98 - i * 0.18),
+          });
+        }
 
         beatsRef.current.push({
           x: bx, y: by, onsetTime,

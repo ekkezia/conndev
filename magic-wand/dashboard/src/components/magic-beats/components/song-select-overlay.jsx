@@ -92,60 +92,65 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
         </div>
 
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-cream-soda/55 font-mono text-sm uppercase tracking-wider">track list</p>
-          <div className="flex items-center gap-2">
+        <p className="text-cream-soda/55 font-mono text-sm uppercase tracking-wider">track list</p>
+
+        <div className="flex items-stretch gap-3">
+          <div ref={listScrollRef} className="flex-1 flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1 select-none">
+            {SONGS.map((song, idx) => (
+              <button
+                key={`${song.src}-${idx}`}
+                type="button"
+                draggable={false}
+                ref={(el) => {
+                  songButtonRefs.current[idx] = el;
+                }}
+                onClick={() => {
+                  setSelected(song);
+                  stopPreview();
+                  onStart(song);
+                }}
+                onMouseEnter={() => {
+                  setSelected(song);
+                  playPreview(song);
+                }}
+                onFocus={() => {
+                  setSelected(song);
+                  playPreview(song);
+                }}
+                className={`
+                  beat-menu-option flex flex-col gap-0.5 text-left px-4 py-3 rounded-xl border transition-all duration-150 select-none
+                  ${selected?.src === song.src ? "is-selected text-cream-soda" : "is-idle text-cream-soda/95"}
+                `}
+              >
+                <span className="font-mono text-2xl font-semibold">{song.title}</span>
+                <span className="font-mono text-xl text-cream-soda/55">
+                  {song.artist} · {song.bpm} BPM
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="w-14 max-h-[50vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-2 flex flex-col items-center">
             <button
               type="button"
-              onClick={() => scrollListBy(-160)}
-              className="beat-menu-option text-cream-soda px-3 py-1.5 rounded-lg font-mono text-sm"
+              onClick={() => scrollListBy(-180)}
+              className="beat-menu-option w-full h-12 rounded-lg font-mono text-xl text-cream-soda flex items-center justify-center"
               data-clickable="true"
             >
-              ▲ up
+              ▲
             </button>
+            <div className="my-2 w-2 flex-1 rounded-full bg-cream-soda/20 relative overflow-hidden">
+              <div className="absolute inset-x-0 top-1/4 h-1/4 rounded-full bg-cream-soda/55" />
+            </div>
             <button
               type="button"
-              onClick={() => scrollListBy(160)}
-              className="beat-menu-option text-cream-soda px-3 py-1.5 rounded-lg font-mono text-sm"
+              onClick={() => scrollListBy(180)}
+              className="beat-menu-option w-full h-12 rounded-lg font-mono text-xl text-cream-soda flex items-center justify-center"
               data-clickable="true"
             >
-              ▼ down
+              ▼
             </button>
           </div>
-        </div>
-
-        <div ref={listScrollRef} className="flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1">
-          {SONGS.map((song, idx) => (
-            <button
-              key={`${song.src}-${idx}`}
-              type="button"
-              ref={(el) => {
-                songButtonRefs.current[idx] = el;
-              }}
-              onClick={() => {
-                setSelected(song);
-                stopPreview();
-                onStart(song);
-              }}
-              onMouseEnter={() => {
-                setSelected(song);
-                playPreview(song);
-              }}
-              onFocus={() => {
-                setSelected(song);
-                playPreview(song);
-              }}
-              className={`
-                beat-menu-option flex flex-col gap-0.5 text-left px-4 py-3 rounded-xl border transition-all duration-150
-                ${selected?.src === song.src ? "is-selected text-cream-soda" : "is-idle text-cream-soda/95"}
-              `}
-            >
-              <span className="font-mono text-2xl font-semibold">{song.title}</span>
-              <span className="font-mono text-xl text-cream-soda/55">
-                {song.artist} · {song.bpm} BPM
-              </span>
-            </button>
-          ))}
         </div>
         </div>
       </div>

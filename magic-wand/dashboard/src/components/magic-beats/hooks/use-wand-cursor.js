@@ -31,6 +31,14 @@ export function useWandCursor(cursor, canvasRect) {
   }, []);
 
   useEffect(() => {
+    const onImuClick = () => {
+      setClickKey((k) => k + 1);
+    };
+    window.addEventListener("imu-click", onImuClick);
+    return () => window.removeEventListener("imu-click", onImuClick);
+  }, []);
+
+  useEffect(() => {
     let rafId;
     function loop(now) {
       rafId = requestAnimationFrame(loop);

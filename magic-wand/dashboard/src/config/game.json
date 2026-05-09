@@ -10,6 +10,16 @@
     }
   },
   {
+    "title": "Steady",
+    "artist": "Complexion",
+    "src": "/music/steady.mp3",
+    "bpm": 129,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
     "title": "Nieve Negra",
     "artist": "Ivan Abogado",
     "src": "/music/nievenegra.wav",
@@ -42,7 +52,7 @@
   {
     "title": "Invitation",
     "artist": "Roy Hargrove",
-    "src": "/music/invitation.wav",
+    "src": "/music/invitation.mp3",
     "bpm": 95,
     "location": {
       "lat": 40.6936,
