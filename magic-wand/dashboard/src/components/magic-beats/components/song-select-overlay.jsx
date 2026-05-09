@@ -85,7 +85,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1">
           {SONGS.map((song, idx) => (
             <button
               key={`${song.src}-${idx}`}
@@ -95,6 +95,8 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
               }}
               onClick={() => {
                 setSelected(song);
+                stopPreview();
+                onStart(song);
               }}
               onMouseEnter={() => {
                 setSelected(song);
@@ -116,22 +118,6 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
             </button>
           ))}
         </div>
-
-        <button
-          type="button"
-          disabled={!selected}
-          onClick={() => {
-            if (!selected) return;
-            stopPreview();
-            onStart(selected);
-          }}
-          className={`
-            beat-menu-start w-full py-4 rounded-xl font-mono text-2xl font-bold tracking-wider uppercase transition-all duration-150
-            ${selected ? "is-ready text-cream-soda active:scale-95 cursor-pointer" : "is-disabled text-cream-soda/80 cursor-not-allowed"}
-          `}
-        >
-          {selected ? "start" : "select a track"}
-        </button>
         </div>
       </div>
     </div>
