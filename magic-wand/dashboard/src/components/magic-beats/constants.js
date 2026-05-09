@@ -5,7 +5,7 @@ export const HIT_WINDOW_AFTER = 550;
 // Perfect timing window around onset:
 // timeToOnset > 0 means early, < 0 means late.
 // Keep early-perfect narrower than HIT_WINDOW_BEFORE so early hits can score near-perfect.
-export const PERFECT_WINDOW_EARLY_MS = 160;
+export const PERFECT_WINDOW_EARLY_MS = 240;
 export const PERFECT_WINDOW_LATE_MS = 420;
 export const BEAT_RADIUS = 70;
 export const HIT_RADIUS = BEAT_RADIUS * 1.2;

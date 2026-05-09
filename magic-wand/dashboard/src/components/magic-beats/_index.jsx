@@ -54,6 +54,7 @@ export default function BeatGame({ className }) {
   const [scoreboardRows, setScoreboardRows] = useState([]);
   const hitFeedbackTimerRef = useRef(null);
   const perfectSfxRef = useRef(null);
+  const greatSfxRef = useRef(null);
   const perfectKeyRef = useRef(0);
 
   const triggerHitFeedback = useCallback((x, y, isPerfect) => {
@@ -64,6 +65,13 @@ export default function BeatGame({ className }) {
       }
       perfectSfxRef.current.currentTime = 0;
       perfectSfxRef.current.play().catch(() => {});
+    } else {
+      if (!greatSfxRef.current) {
+        greatSfxRef.current = new Audio(SFX.great);
+        greatSfxRef.current.volume = 0.7;
+      }
+      greatSfxRef.current.currentTime = 0;
+      greatSfxRef.current.play().catch(() => {});
     }
 
     const text = isPerfect
@@ -96,6 +104,7 @@ export default function BeatGame({ className }) {
   const canvasSizeRef = useRef({ width: 0, height: 0 });
   const gameRafRef = useRef(null);
   const audioRef = useRef(null);
+  const idleAudioRef = useRef(null);
   const scoreRef = useRef(0);
 
   const trailItemsRef = useRef([]);
@@ -223,6 +232,33 @@ export default function BeatGame({ className }) {
       if (window.magicBeatGame) delete window.magicBeatGame;
     };
   }, [activeSong]);
+
+  useEffect(() => {
+    if (activeSong) {
+      if (idleAudioRef.current) {
+        idleAudioRef.current.pause();
+      }
+      return;
+    }
+    if (!mapReady) return;
+
+    if (!idleAudioRef.current) {
+      const idle = new Audio("/music/steady.mp3");
+      idle.loop = true;
+      idle.volume = 0.45;
+      idleAudioRef.current = idle;
+    }
+    idleAudioRef.current.play().catch(() => {});
+  }, [activeSong, mapReady]);
+
+  useEffect(() => {
+    return () => {
+      if (idleAudioRef.current) {
+        idleAudioRef.current.pause();
+        idleAudioRef.current = null;
+      }
+    };
+  }, []);
 
   const setCursorDotScale = useCallback((nextScale) => {
     const dot = cursorDotRef.current;
