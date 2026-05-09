@@ -46,6 +46,7 @@ console.log(
 
 let drawState = null; // 'start' | 'stop' | null
 let mouseControlEnabled = false; // true while draw/start override is active
+let wandPower = false;
 const detectedLocalMouseScreenSize =
   robot && typeof robot.getScreenSize === 'function'
     ? robot.getScreenSize()
@@ -85,6 +86,38 @@ function setMouseOverrideEnabled(enabled, reason = 'unknown') {
       timestamp: Date.now(),
     });
   }
+}
+
+function emitPowerState(
+  power,
+  previousPower = null,
+  transition = 'sync',
+  source = 'server-mouse',
+) {
+  if (typeof io === 'undefined') return;
+  io.emit('sensor-power', {
+    power: power === true,
+    previousPower: previousPower === true,
+    transition,
+    source,
+    timestamp: Date.now(),
+  });
+}
+
+function setWandPower(nextPower, source = 'server-mouse') {
+  const normalized = nextPower === true;
+  const prev = wandPower === true;
+  if (prev === normalized) return;
+
+  wandPower = normalized;
+  console.log(`🪄 MagicWand: ${wandPower ? 'ON' : 'OFF'} (${source})`);
+
+  emitPowerState(
+    normalized,
+    prev,
+    normalized ? 'on' : 'off',
+    source,
+  );
 }
 
 function canControlRealMouse() {
@@ -132,6 +165,23 @@ function parseDrawValue(raw) {
   }
 
   return null;
+}
+
+function applyDrawState(nextDraw, source = 'udp-draw') {
+  if (!nextDraw || (nextDraw !== 'start' && nextDraw !== 'stop')) return false;
+  if (drawState === nextDraw) return false;
+
+  drawState = nextDraw;
+  io.emit('sensor-draw', { draw: nextDraw, timestamp: Date.now() });
+  console.log(`✍🏻 Draw: ${nextDraw} (${source})`);
+
+  if (nextDraw === 'start' && currentSessionIndex === null) {
+    startNewSession();
+  } else if (nextDraw === 'stop' && currentSessionIndex !== null) {
+    endSession();
+  }
+
+  return true;
 }
 
 // ===============================
@@ -529,7 +579,7 @@ async function handleSensorEntry(entry, label = 'UDP') {
   } else if (currentSessionIndex !== null && IS_LOCAL) {
     console.log(`📡 ${label} data received (local mode - Firebase writes skipped)`);
   } else {
-    console.log(`📡 ${label} data received but no active session (power is OFF)`);
+    console.log(`📡 ${label} data received but no active draw session`);
   }
 }
 
@@ -565,12 +615,10 @@ udpServer.on('message', async (msg, rinfo) => {
   if (packetPath === 'kezia/imu/data') {
     try {
       const drawFromData = parseDrawValue(packetData?.draw);
-      if (drawFromData && drawFromData !== drawState) {
-        drawState = drawFromData;
-        io.emit('sensor-draw', { draw: drawFromData, timestamp: Date.now() });
+      if (applyDrawState(drawFromData, 'udp-data-draw')) {
         if (drawFromData === 'start') setMouseOverrideEnabled(true, 'data-draw-start');
         if (drawFromData === 'stop') setMouseOverrideEnabled(false, 'data-draw-stop');
-        console.log(`✍🏻 Draw (from data): ${drawFromData}`);
+        setWandPower(drawFromData === 'start', 'udp-data-draw');
       }
 
       const entry = processSensorData(packetData, 'udp');
@@ -585,7 +633,7 @@ udpServer.on('message', async (msg, rinfo) => {
   if (packetPath === 'kezia/imu/power') {
     try {
       if (packetData?.power !== undefined) {
-        // todo start new firebase session on start/stop
+        setWandPower(packetData.power === true, 'udp-power');
       }
     } catch (err) {
       console.error('UDP power handling error:', err.message);
@@ -601,11 +649,10 @@ udpServer.on('message', async (msg, rinfo) => {
         console.warn('⚠️ Ignoring unknown draw payload:', packetData);
         return;
       }
-      drawState = value;
-      io.emit('sensor-draw', { draw: value, timestamp: Date.now() });
+      applyDrawState(value, 'udp-draw');
       if (value === 'start') setMouseOverrideEnabled(true, 'draw-start');
       if (value === 'stop') setMouseOverrideEnabled(false, 'draw-stop');
-      console.log(`✍🏻 Draw: ${value}`);
+      setWandPower(value === 'start', 'udp-draw');
     } catch (err) {
       console.error('UDP draw handling error:', err.message);
     }
@@ -676,6 +723,13 @@ io.on('connection', async (socket) => {
   }
 
   socket.emit('user', { id: socket.id });
+  socket.emit('sensor-power', {
+    power: wandPower === true,
+    previousPower: null,
+    transition: 'sync',
+    source: 'server-mouse',
+    timestamp: Date.now(),
+  });
   socket.emit('mouse-override', {
     enabled: mouseControlEnabled,
     reason: 'sync',

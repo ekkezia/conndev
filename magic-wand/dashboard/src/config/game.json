@@ -1,5 +1,15 @@
 [
   {
+    "title": "PRISHA",
+    "artist": "Prisha Jain",
+    "src": "/music/prisha.wav",
+    "bpm": 95,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
     "title": "Nieve Negra",
     "artist": "Ivan Abogado",
     "src": "/music/nievenegra.wav",
@@ -27,6 +37,16 @@
     "location": {
       "lat": 40.7576,
       "lng": -73.9859
+    }
+  },
+  {
+    "title": "Invitation",
+    "artist": "Roy Hargrove",
+    "src": "/music/invitation.wav",
+    "bpm": 95,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
     }
   }
 ]

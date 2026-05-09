@@ -36,6 +36,61 @@ console.log(
 let mouseEnabled = false;
 let drawState = null; // 'start' | 'stop' | null
 
+function parseDrawValue(raw) {
+  if (raw == null) return null;
+
+  if (typeof raw === 'object') {
+    if ('draw' in raw) return parseDrawValue(raw.draw);
+    if ('state' in raw) return parseDrawValue(raw.state);
+    if ('value' in raw) return parseDrawValue(raw.value);
+    return null;
+  }
+
+  if (typeof raw === 'boolean') return raw ? 'start' : 'stop';
+  if (typeof raw === 'number') return raw === 0 ? 'stop' : 'start';
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed !== raw) {
+        const nested = parseDrawValue(parsed);
+        if (nested) return nested;
+      }
+    } catch {
+      // not JSON; continue
+    }
+
+    const normalized = trimmed
+      .replace(/^['"]+|['"]+$/g, '')
+      .trim()
+      .toLowerCase();
+
+    if (['start', 'on', 'true', '1', 'down'].includes(normalized)) return 'start';
+    if (['stop', 'off', 'false', '0', 'up'].includes(normalized)) return 'stop';
+  }
+
+  return null;
+}
+
+function applyDrawState(nextDraw, source = 'udp-draw') {
+  if (!nextDraw || (nextDraw !== 'start' && nextDraw !== 'stop')) return false;
+  if (drawState === nextDraw) return false;
+
+  drawState = nextDraw;
+  io.emit('sensor-draw', { draw: nextDraw, timestamp: Date.now() });
+  console.log(`✍🏻 Draw: ${nextDraw} (${source})`);
+
+  if (nextDraw === 'start' && currentSessionIndex === null) {
+    startNewSession();
+  } else if (nextDraw === 'stop' && currentSessionIndex !== null) {
+    endSession();
+  }
+
+  return true;
+}
+
 // ===============================
 // Firebase Session Tracking
 // ===============================
@@ -368,7 +423,7 @@ async function handleSensorEntry(entry, label = 'UDP') {
   } else if (currentSessionIndex !== null && IS_LOCAL) {
     console.log(`📡 ${label} data received (local mode - Firebase writes skipped)`);
   } else {
-    console.log(`📡 ${label} data received but no active session (power is OFF)`);
+    console.log(`📡 ${label} data received but no active draw session`);
   }
 }
 
@@ -403,6 +458,8 @@ udpServer.on('message', async (msg, rinfo) => {
   // --- sensor data ---
   if (packetPath === 'kezia/imu/data') {
     try {
+      const drawFromData = parseDrawValue(packetData?.draw);
+      applyDrawState(drawFromData, 'udp-data-draw');
       const entry = processSensorData(packetData, 'udp');
       await handleSensorEntry(entry, 'UDP');
     } catch (err) {
@@ -415,12 +472,8 @@ udpServer.on('message', async (msg, rinfo) => {
   if (packetPath === 'kezia/imu/power') {
     try {
       if (packetData?.power !== undefined) {
-        const wasEnabled = mouseEnabled;
         mouseEnabled = packetData.power === true;
         console.log(`🖱 Power: ${mouseEnabled ? 'ON' : 'OFF'}`);
-
-        if (!wasEnabled && mouseEnabled) startNewSession();
-        else if (wasEnabled && !mouseEnabled) endSession();
       }
     } catch (err) {
       console.error('UDP power handling error:', err.message);
@@ -431,11 +484,12 @@ udpServer.on('message', async (msg, rinfo) => {
   // --- CONTROL ---
   if (packetPath === 'kezia/imu/draw') {
     try {
-      const value =
-        typeof packetData === 'string' ? packetData.trim() : String(packetData);
-      drawState = value;
-      io.emit('sensor-draw', { draw: value, timestamp: Date.now() });
-      console.log(`✍🏻 Draw: ${value}`);
+      const value = parseDrawValue(packetData);
+      if (!value) {
+        console.warn('⚠️ Ignoring unknown draw payload:', packetData);
+        return;
+      }
+      applyDrawState(value, 'udp-draw');
     } catch (err) {
       console.error('UDP draw handling error:', err.message);
     }

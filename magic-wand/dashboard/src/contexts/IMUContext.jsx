@@ -4,6 +4,8 @@ import { io } from 'socket.io-client';
 import { REACT_APP_SERVER_URL } from '../config';
 
 const IMUContext = createContext(null);
+const DRAG_HOLD_MS = 260;
+const DRAG_MIN_DISTANCE_PX = 14;
 
 export function IMUProvider({ children }) {
   const [mouseEnabled, setMouseEnabled] = useState(false);
@@ -146,6 +148,9 @@ export function IMUProvider({ children }) {
   const disableMouse = useCallback(() => setMouseEnabled(false), []);
 
   const socket = useRef(null);
+  const dragCandidateRef = useRef(null);
+  const activeDragRef = useRef(null);
+  const dragTimerRef = useRef(null);
 
   useEffect(() => {
     powerStateRef.current = powerState;
@@ -315,6 +320,31 @@ export function IMUProvider({ children }) {
       const clientPos = toClientPoint(pos);
       mouseClientPosRef.current = clientPos;
       setHoverTarget(getHoverTarget(clientPos));
+
+      const activeDrag = activeDragRef.current;
+      if (activeDrag && clientPos) {
+        const moveEvent = new MouseEvent('mousemove', {
+          bubbles: true,
+          cancelable: true,
+          clientX: clientPos.x,
+          clientY: clientPos.y,
+          buttons: 1,
+        });
+        activeDrag.target.dispatchEvent(moveEvent);
+      }
+
+      const candidate = dragCandidateRef.current;
+      if (candidate && !candidate.isDragging && clientPos) {
+        const dx = clientPos.x - candidate.startPos.x;
+        const dy = clientPos.y - candidate.startPos.y;
+        if (Math.hypot(dx, dy) >= DRAG_MIN_DISTANCE_PX) {
+          candidate.isDragging = true;
+          activeDragRef.current = {
+            target: candidate.target,
+            startPos: candidate.startPos,
+          };
+        }
+      }
     });
 
     socket.current.on('sensor-click', () => {
@@ -330,30 +360,68 @@ export function IMUProvider({ children }) {
       const clientPos = mouseClientPosRef.current || toClientPoint(mousePosRef.current);
       const target = getClickTarget(clientPos);
       if (target && clientPos) {
+        if (dragTimerRef.current) {
+          clearTimeout(dragTimerRef.current);
+          dragTimerRef.current = null;
+        }
+
         target.dispatchEvent(
           new MouseEvent('mousedown', {
             bubbles: true,
             cancelable: true,
             clientX: clientPos.x,
             clientY: clientPos.y,
-          })
+            buttons: 1,
+          }),
         );
-        target.dispatchEvent(
-          new MouseEvent('mouseup', {
-            bubbles: true,
-            cancelable: true,
-            clientX: clientPos.x,
-            clientY: clientPos.y,
-          })
-        );
-        target.dispatchEvent(
-          new MouseEvent('click', {
-            bubbles: true,
-            cancelable: true,
-            clientX: clientPos.x,
-            clientY: clientPos.y,
-          })
-        );
+
+        dragCandidateRef.current = {
+          target,
+          startPos: clientPos,
+          isDragging: false,
+        };
+        activeDragRef.current = null;
+
+        dragTimerRef.current = setTimeout(() => {
+          const latestClientPos =
+            mouseClientPosRef.current || toClientPoint(mousePosRef.current) || clientPos;
+          const cand = dragCandidateRef.current;
+          const active = activeDragRef.current;
+
+          if (active && cand?.isDragging) {
+            active.target.dispatchEvent(
+              new MouseEvent('mouseup', {
+                bubbles: true,
+                cancelable: true,
+                clientX: latestClientPos.x,
+                clientY: latestClientPos.y,
+                buttons: 0,
+              }),
+            );
+          } else if (cand) {
+            cand.target.dispatchEvent(
+              new MouseEvent('mouseup', {
+                bubbles: true,
+                cancelable: true,
+                clientX: latestClientPos.x,
+                clientY: latestClientPos.y,
+                buttons: 0,
+              }),
+            );
+            cand.target.dispatchEvent(
+              new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                clientX: latestClientPos.x,
+                clientY: latestClientPos.y,
+              }),
+            );
+          }
+
+          dragCandidateRef.current = null;
+          activeDragRef.current = null;
+          dragTimerRef.current = null;
+        }, DRAG_HOLD_MS);
       }
 
       socket.current?.emit('ui-click', {
@@ -368,6 +436,12 @@ export function IMUProvider({ children }) {
     });
 
     return () => {
+      if (dragTimerRef.current) {
+        clearTimeout(dragTimerRef.current);
+        dragTimerRef.current = null;
+      }
+      dragCandidateRef.current = null;
+      activeDragRef.current = null;
       socket.current.disconnect();
       window.removeEventListener('mousemove', onMouseMove);
       setHoverTarget(null);
