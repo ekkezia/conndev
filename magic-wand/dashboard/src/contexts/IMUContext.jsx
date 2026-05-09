@@ -5,8 +5,6 @@ import { REACT_APP_SERVER_URL, SFX } from '../config';
 import { playSfx } from '../components/magic-beats/audio';
 
 const IMUContext = createContext(null);
-const DRAG_HOLD_MS = 260;
-const DRAG_MIN_DISTANCE_PX = 14;
 
 export function IMUProvider({ children }) {
   const [mouseEnabled, setMouseEnabled] = useState(false);
@@ -49,17 +47,11 @@ export function IMUProvider({ children }) {
   }, [sensorData])
   const toClientPoint = useCallback((screenPos) => {
     if (!screenPos) return null;
-    const screenW = Math.max(window.screen.width || window.innerWidth || 1, 1);
-    const screenH = Math.max(window.screen.height || window.innerHeight || 1, 1);
+    const viewW = Math.max(window.innerWidth || 1, 1);
+    const viewH = Math.max(window.innerHeight || 1, 1);
     return {
-      x: Math.max(
-        0,
-        Math.min(window.innerWidth - 1, (screenPos.x / screenW) * window.innerWidth),
-      ),
-      y: Math.max(
-        0,
-        Math.min(window.innerHeight - 1, (screenPos.y / screenH) * window.innerHeight),
-      ),
+      x: Math.max(0, Math.min(viewW - 1, Number(screenPos.x) || 0)),
+      y: Math.max(0, Math.min(viewH - 1, Number(screenPos.y) || 0)),
     };
   }, []);
 
@@ -129,9 +121,6 @@ export function IMUProvider({ children }) {
   const disableMouse = useCallback(() => setMouseEnabled(false), []);
 
   const socket = useRef(null);
-  const dragCandidateRef = useRef(null);
-  const activeDragRef = useRef(null);
-  const dragTimerRef = useRef(null);
 
   useEffect(() => {
     powerStateRef.current = powerState;
@@ -198,7 +187,7 @@ export function IMUProvider({ children }) {
     });
 
     // Report screen size immediately so server can use it for mouse mapping
-    socket.current.emit('screen-size', { width: window.screen.width, height: window.screen.height });
+    socket.current.emit('screen-size', { width: window.innerWidth, height: window.innerHeight });
 
     // Report current mouse position (throttled) so server can init cursor state
     let lastMouseReport = 0;
@@ -206,7 +195,7 @@ export function IMUProvider({ children }) {
       const now = Date.now();
       if (now - lastMouseReport < 50) return; // max 20/s
       lastMouseReport = now;
-      socket.current.emit('mouse-pos-report', { x: e.screenX, y: e.screenY });
+      socket.current.emit('mouse-pos-report', { x: e.clientX, y: e.clientY });
     };
     window.addEventListener('mousemove', onMouseMove);
 
@@ -301,31 +290,6 @@ export function IMUProvider({ children }) {
       const clientPos = toClientPoint(pos);
       mouseClientPosRef.current = clientPos;
       setHoverTarget(getHoverTarget(clientPos));
-
-      const activeDrag = activeDragRef.current;
-      if (activeDrag && clientPos) {
-        const moveEvent = new MouseEvent('mousemove', {
-          bubbles: true,
-          cancelable: true,
-          clientX: clientPos.x,
-          clientY: clientPos.y,
-          buttons: 1,
-        });
-        activeDrag.target.dispatchEvent(moveEvent);
-      }
-
-      const candidate = dragCandidateRef.current;
-      if (candidate && !candidate.isDragging && clientPos) {
-        const dx = clientPos.x - candidate.startPos.x;
-        const dy = clientPos.y - candidate.startPos.y;
-        if (Math.hypot(dx, dy) >= DRAG_MIN_DISTANCE_PX) {
-          candidate.isDragging = true;
-          activeDragRef.current = {
-            target: candidate.target,
-            startPos: candidate.startPos,
-          };
-        }
-      }
     });
 
     socket.current.on('sensor-click', () => {
@@ -341,11 +305,6 @@ export function IMUProvider({ children }) {
       const clientPos = mouseClientPosRef.current || toClientPoint(mousePosRef.current);
       const target = getClickTarget(clientPos);
       if (target && clientPos) {
-        if (dragTimerRef.current) {
-          clearTimeout(dragTimerRef.current);
-          dragTimerRef.current = null;
-        }
-
         target.dispatchEvent(
           new MouseEvent('mousedown', {
             bubbles: true,
@@ -355,54 +314,23 @@ export function IMUProvider({ children }) {
             buttons: 1,
           }),
         );
-
-        dragCandidateRef.current = {
-          target,
-          startPos: clientPos,
-          isDragging: false,
-        };
-        activeDragRef.current = null;
-
-        dragTimerRef.current = setTimeout(() => {
-          const latestClientPos =
-            mouseClientPosRef.current || toClientPoint(mousePosRef.current) || clientPos;
-          const cand = dragCandidateRef.current;
-          const active = activeDragRef.current;
-
-          if (active && cand?.isDragging) {
-            active.target.dispatchEvent(
-              new MouseEvent('mouseup', {
-                bubbles: true,
-                cancelable: true,
-                clientX: latestClientPos.x,
-                clientY: latestClientPos.y,
-                buttons: 0,
-              }),
-            );
-          } else if (cand) {
-            cand.target.dispatchEvent(
-              new MouseEvent('mouseup', {
-                bubbles: true,
-                cancelable: true,
-                clientX: latestClientPos.x,
-                clientY: latestClientPos.y,
-                buttons: 0,
-              }),
-            );
-            cand.target.dispatchEvent(
-              new MouseEvent('click', {
-                bubbles: true,
-                cancelable: true,
-                clientX: latestClientPos.x,
-                clientY: latestClientPos.y,
-              }),
-            );
-          }
-
-          dragCandidateRef.current = null;
-          activeDragRef.current = null;
-          dragTimerRef.current = null;
-        }, DRAG_HOLD_MS);
+        target.dispatchEvent(
+          new MouseEvent('mouseup', {
+            bubbles: true,
+            cancelable: true,
+            clientX: clientPos.x,
+            clientY: clientPos.y,
+            buttons: 0,
+          }),
+        );
+        target.dispatchEvent(
+          new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            clientX: clientPos.x,
+            clientY: clientPos.y,
+          }),
+        );
       }
 
       socket.current?.emit('ui-click', {
@@ -417,12 +345,6 @@ export function IMUProvider({ children }) {
     });
 
     return () => {
-      if (dragTimerRef.current) {
-        clearTimeout(dragTimerRef.current);
-        dragTimerRef.current = null;
-      }
-      dragCandidateRef.current = null;
-      activeDragRef.current = null;
       socket.current.disconnect();
       window.removeEventListener('mousemove', onMouseMove);
       setHoverTarget(null);
