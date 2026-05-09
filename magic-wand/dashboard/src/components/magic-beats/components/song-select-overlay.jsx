@@ -49,7 +49,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
       </svg>
       <div className="p-10 w-full max-w-lg flex flex-col gap-6">
         <div>
-          <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">beat game</h2>
+          <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">MagicBeats</h2>
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
         </div>
 
