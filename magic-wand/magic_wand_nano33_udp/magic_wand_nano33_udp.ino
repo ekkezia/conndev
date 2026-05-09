@@ -9,7 +9,7 @@
 
 // ================= UDP =================
 WiFiUDP udp;
-IPAddress serverIp(10, 23, 11, 207);   // updated computer/server IP
+IPAddress serverIp(10, 23, 10, 18);   // updated computer/server IP
 const unsigned int serverUdpPort = 4210;
 const unsigned int localUdpPort  = 4211; // listens for feedback
 char incomingPacket[160];
@@ -23,7 +23,8 @@ const int CLICK_BTN_PIN = 12;
 #define NEOPIXEL_PIN 6
 #define STAR_LED_COUNT 5
 #define STATUS_PIXEL_INDEX 0
-Adafruit_NeoPixel pixels(STAR_LED_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
+#define PIXEL_ORDER NEO_GRB
+Adafruit_NeoPixel pixels(STAR_LED_COUNT, NEOPIXEL_PIN, PIXEL_ORDER + NEO_KHZ800);
 
 // ================= TIMING =================
 const unsigned long SEND_INTERVAL      = 200;
@@ -66,6 +67,65 @@ Adafruit_DRV2605 drv;
 #define HAPTIC_SOFT_BUMP  14
 #define HAPTIC_RAMP_UP    47
 
+const uint8_t PIXEL_BRIGHTNESS = 55;
+const uint8_t DRAW_ANIM_R = 90;
+const uint8_t DRAW_ANIM_G = 60;
+const uint8_t DRAW_ANIM_B = 30;
+const uint8_t DRAW_ON_R = 180;
+const uint8_t DRAW_ON_G = 0;
+const uint8_t DRAW_ON_B = 120;
+
+void showAllPixels(uint32_t color);
+void clearPixels();
+
+uint32_t rgb(uint8_t r, uint8_t g, uint8_t b) {
+  return pixels.Color(r, g, b);
+}
+
+neoPixelType pixelOrderFromName(const String& order) {
+  if (order == "rgb") return NEO_RGB;
+  if (order == "rbg") return NEO_RBG;
+  if (order == "grb") return NEO_GRB;
+  if (order == "gbr") return NEO_GBR;
+  if (order == "brg") return NEO_BRG;
+  if (order == "bgr") return NEO_BGR;
+  return NEO_GRB;
+}
+
+void applyPixelOrder(const String& order) {
+  pixels.updateType(pixelOrderFromName(order) + NEO_KHZ800);
+  clearPixels();
+  Serial.print("PIXEL ORDER -> ");
+  Serial.println(order);
+}
+
+void runLedDiagnosticsCommand() {
+  if (!Serial.available()) return;
+  String cmd = Serial.readStringUntil('\n');
+  cmd.trim();
+  cmd.toLowerCase();
+  if (!cmd.length()) return;
+
+  if (cmd == "led help") {
+    Serial.println("Commands: led amber | led fuchsia | led white | led off | order <rgb|rbg|grb|gbr|brg|bgr>");
+  } else if (cmd == "led amber") {
+    showAllPixels(rgb(DRAW_ANIM_R, DRAW_ANIM_G, DRAW_ANIM_B));
+  } else if (cmd == "led fuchsia") {
+    showAllPixels(rgb(DRAW_ON_R, DRAW_ON_G, DRAW_ON_B));
+  } else if (cmd == "led white") {
+    showAllPixels(rgb(255, 255, 255));
+  } else if (cmd == "led off") {
+    clearPixels();
+  } else if (cmd.startsWith("order ")) {
+    String order = cmd.substring(6);
+    order.trim();
+    applyPixelOrder(order);
+  } else {
+    Serial.print("Unknown cmd: ");
+    Serial.println(cmd);
+  }
+}
+
 void showAllPixels(uint32_t color) {
   for (int i = 0; i < STAR_LED_COUNT; i++) pixels.setPixelColor(i, color);
   pixels.show();
@@ -87,7 +147,7 @@ void clearStatusPixel() {
 }
 
 void restorePixelsFromDrawState() {
-  if (drawState) showAllPixels(pixels.Color(180, 0, 120));
+  if (drawState) showAllPixels(rgb(DRAW_ON_R, DRAW_ON_G, DRAW_ON_B));
   else clearPixels();
 }
 
@@ -122,11 +182,13 @@ void blinkAllPixelsOnce(uint32_t color, int onMs = 80, int offMs = 80) {
 }
 
 void applyDrawPixelState(bool isDrawing) {
-  const uint32_t animColor = pixels.Color(90, 60, 30);
-  const uint32_t drawOnColor = pixels.Color(180, 0, 120);
+  const uint32_t animColor = rgb(DRAW_ANIM_R, DRAW_ANIM_G, DRAW_ANIM_B);
+  const uint32_t drawOnColor = rgb(DRAW_ON_R, DRAW_ON_G, DRAW_ON_B);
   blinkPixelsOneByOne(animColor);
   if (isDrawing) showAllPixels(drawOnColor);
   else clearPixels();
+  Serial.print("LED draw state -> ");
+  Serial.println(isDrawing ? "ON(fuchsia)" : "OFF");
 }
 
 void playHaptic(int effect) {
@@ -245,7 +307,7 @@ void checkUdpFeedback() {
     playHaptic(HAPTIC_CLICK);
   } else if (msg == "beat_hit perfect") {
     playHaptic2(HAPTIC_RAMP_UP, HAPTIC_DOUBLE);
-    sweepPixelsFill(pixels.Color(0, 140, 0));
+    sweepPixelsFill(rgb(0, 140, 0));
     restorePixelsFromDrawState();
   } else if (msg == "beat_hit hit") {
     playHaptic(HAPTIC_TICK);
@@ -274,18 +336,19 @@ bool connectToNetwork() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(20);
   delay(500);
 
   pinMode(DRAW_BTN_PIN, INPUT_PULLUP);
   pinMode(CLICK_BTN_PIN, INPUT_PULLUP);
 
   pixels.begin();
-  pixels.setBrightness(55);
+  pixels.setBrightness(PIXEL_BRIGHTNESS);
   clearPixels();
 
   if (!connectToNetwork()) {
     while (true) {
-      setStatusPixel(pixels.Color(180, 0, 0));
+      setStatusPixel(rgb(180, 0, 0));
       delay(120);
       clearStatusPixel();
       delay(120);
@@ -319,6 +382,7 @@ void setup() {
 
 void loop() {
   checkUdpFeedback();
+  runLedDiagnosticsCommand();
   unsigned long now = millis();
 
   if (!ntpBegun) {
@@ -359,7 +423,7 @@ void loop() {
     if (clickReading != clickBtnState) {
       clickBtnState = clickReading;
       if (clickBtnState == LOW) {
-        blinkAllPixelsOnce(pixels.Color(255, 255, 255));
+        blinkAllPixelsOnce(rgb(255, 255, 255));
         pulseClick();
       }
     }

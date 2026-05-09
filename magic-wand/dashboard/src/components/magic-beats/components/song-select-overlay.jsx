@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import SONGS from "../../../config/game.json";
 import { useWandCursor } from "../hooks/use-wand-cursor";
 import WandCursorSVG from "./wand-cursor-svg";
@@ -7,17 +7,19 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
   const [selected, setSelected] = useState(null);
   const previewAudioRef = useRef(null);
   const previewSrcRef = useRef(null);
+  const songButtonRefs = useRef([]);
+  const hoveredSongSrcRef = useRef(null);
   const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } = useWandCursor(cursor, canvasRect);
 
-  const stopPreview = () => {
+  const stopPreview = useCallback(() => {
     if (previewAudioRef.current) {
       previewAudioRef.current.pause();
       previewAudioRef.current = null;
     }
     previewSrcRef.current = null;
-  };
+  }, []);
 
-  const playPreview = (song) => {
+  const playPreview = useCallback((song) => {
     if (!song?.src) return;
     if (previewAudioRef.current && previewSrcRef.current === song.src) {
       previewAudioRef.current.play().catch(() => {});
@@ -31,11 +33,40 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
     preview.play().catch(() => {});
     previewAudioRef.current = preview;
     previewSrcRef.current = song.src;
-  };
+  }, [stopPreview]);
 
   useEffect(() => () => {
     stopPreview();
-  }, []);
+  }, [stopPreview]);
+
+  useEffect(() => {
+    if (!activeCursor) return;
+
+    let hoveredSong = null;
+    for (let idx = 0; idx < SONGS.length; idx += 1) {
+      const el = songButtonRefs.current[idx];
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const inside =
+        activeCursor.x >= rect.left &&
+        activeCursor.x <= rect.right &&
+        activeCursor.y >= rect.top &&
+        activeCursor.y <= rect.bottom;
+      if (inside) {
+        hoveredSong = SONGS[idx];
+        break;
+      }
+    }
+
+    const hoveredSrc = hoveredSong?.src ?? null;
+    if (hoveredSrc && hoveredSrc !== hoveredSongSrcRef.current) {
+      hoveredSongSrcRef.current = hoveredSrc;
+      setSelected(hoveredSong);
+      playPreview(hoveredSong);
+    } else if (!hoveredSrc) {
+      hoveredSongSrcRef.current = null;
+    }
+  }, [activeCursor, playPreview]);
 
   return (
     <div
@@ -58,6 +89,9 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
             <button
               key={`${song.src}-${idx}`}
               type="button"
+              ref={(el) => {
+                songButtonRefs.current[idx] = el;
+              }}
               onClick={() => {
                 setSelected(song);
               }}
