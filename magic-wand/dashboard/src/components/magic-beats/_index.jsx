@@ -21,6 +21,8 @@ import {
 import { evalBezier, makeApproachGroup, makeBeatGroup } from "./geometry";
 import SongSelectOverlay from "./components/song-select-overlay";
 import StarTraceScreen from "./components/star-trace-screen";
+import PostGameOverlay from "./components/post-game-overlay";
+import HighScoreBoardOverlay from "./components/high-score-board-overlay";
 
 const PERFECT_HIT_WORDS = ["PERFECT", "MAGIC", "WOW", "SASSY", "AMAZING"];
 const GOOD_HIT_WORDS = ["GREAT", "NICE", "OK", "GOOD"];
@@ -29,21 +31,27 @@ const FEEDBACK_TRAIL_STARS = 5;
 const HIT_TRAIL_GRADIENT = ["#fff18a", "#dfff68", "#b8ff52", "#86f94a", "#49e35a"];
 const MISS_TRAIL_GRADIENT = ["#ffc1dd", "#ff9bc7", "#ff79b6", "#ff5aa7", "#ff3e9a"];
 const DESKTOP_MOUSE_TAKEOVER_MS = 220;
+const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function BeatGame({ className }) {
   const canvasRef = useRef(null);
-  const { sensorData, mousePos, drawState } = useIMU();
+  const { sensorData, mousePos, drawState, powerState } = useIMU();
 
   const [activeSong, setActiveSong] = useState(null);
-  const [traced, setTraced] = useState(false);
+  const [traced, setTraced] = useState(true);
   const [menuCursor, setMenuCursor] = useState(null);
   const [canvasRect, setCanvasRect] = useState(null);
   const [score, setScore] = useState(0);
+  const [pendingResult, setPendingResult] = useState(null);
   const [gridVisible, setGridVisible] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(
+    typeof document !== "undefined" ? Boolean(document.fullscreenElement) : false,
+  );
   const [lastHitPos, setLastHitPos] = useState(null);
   const [mapReady, setMapReady] = useState(false);
   const [hitFeedback, setHitFeedback] = useState(null);
+  const [scoreboardRows, setScoreboardRows] = useState([]);
   const hitFeedbackTimerRef = useRef(null);
   const perfectSfxRef = useRef(null);
   const perfectKeyRef = useRef(0);
@@ -88,6 +96,7 @@ export default function BeatGame({ className }) {
   const canvasSizeRef = useRef({ width: 0, height: 0 });
   const gameRafRef = useRef(null);
   const audioRef = useRef(null);
+  const scoreRef = useRef(0);
 
   const trailItemsRef = useRef([]);
   const lastTrailPosRef = useRef(null);
@@ -96,6 +105,55 @@ export default function BeatGame({ className }) {
   const trailStateTimerRef = useRef(null);
   const trailFeedbackRef = useRef({ type: "normal", remaining: 0, index: 0 });
   const socketRef = useRef(null);
+
+  const isPowerOn = powerState?.power === true;
+  const showHighScoreBoard = !isPowerOn && !activeSong && !pendingResult;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SCOREBOARD_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const sanitized = parsed
+        .filter((row) => row && typeof row === "object")
+        .map((row) => ({
+          id: String(row.id ?? `${row.name ?? "player"}-${row.playedAtMs ?? Date.now()}`),
+          name: String(row.name ?? "PLAYER"),
+          score: Number.isFinite(Number(row.score)) ? Number(row.score) : 0,
+          songTitle: String(row.songTitle ?? "Unknown Song"),
+          songArtist: String(row.songArtist ?? ""),
+          playedAt: String(row.playedAt ?? new Date().toISOString()),
+          playedAtMs: Number.isFinite(Number(row.playedAtMs)) ? Number(row.playedAtMs) : Date.now(),
+        }))
+        .sort((a, b) => b.score - a.score || b.playedAtMs - a.playedAtMs)
+        .slice(0, 120);
+      setScoreboardRows(sanitized);
+    } catch {}
+  }, []);
+
+  const addScoreboardRow = useCallback((row) => {
+    setScoreboardRows((prev) => {
+      const next = [row, ...prev]
+        .sort((a, b) => b.score - a.score || b.playedAtMs - a.playedAtMs)
+        .slice(0, 120);
+      try {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(SCOREBOARD_STORAGE_KEY, JSON.stringify(next));
+        }
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const addScore = useCallback((delta) => {
+    setScore((current) => {
+      const next = current + delta;
+      scoreRef.current = next;
+      return next;
+    });
+  }, []);
 
   const emitPerfectTraceHit = useCallback((x, y) => {
     socketRef.current?.emit('beat-hit', { perfect: true, x, y, source: 'star-trace' });
@@ -111,6 +169,38 @@ export default function BeatGame({ className }) {
     if (latest?.draw === "stop") return false;
     return false;
   })();
+
+  useEffect(() => {
+    if (powerState?.transition === "on") {
+      setTraced(false);
+      return;
+    }
+    if (powerState?.transition === "off") {
+      setTraced(true);
+    }
+  }, [powerState?.transition, powerState?.timestamp]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    window.magicBeatGame = {
+      endSong: () => {
+        const audio = audioRef.current;
+        if (!audio || !activeSong) return false;
+        audio.dispatchEvent(new Event("ended"));
+        return true;
+      },
+      state: () => ({
+        hasActiveSong: Boolean(activeSong),
+        score: scoreRef.current,
+        activeSongTitle: activeSong?.title ?? null,
+      }),
+    };
+
+    return () => {
+      if (window.magicBeatGame) delete window.magicBeatGame;
+    };
+  }, [activeSong]);
 
   const setCursorDotScale = useCallback((nextScale) => {
     const dot = cursorDotRef.current;
@@ -327,6 +417,14 @@ export default function BeatGame({ className }) {
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
+  useEffect(() => {
+    const syncFullscreen = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+
   // ─── CLICK TO HIT ─────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -358,7 +456,7 @@ export default function BeatGame({ className }) {
         triggerHitFeedback(beat.x, beat.y, isPerfect);
         cursorClickTimeRef.current = performance.now();
         startTrailFeedback("hit");
-        setScore((s) => s + (isPerfect ? 30 : 10));
+        addScore(isPerfect ? 30 : 10);
         const { width, height } = canvasSizeRef.current;
         setLastHitPos({ xNorm: beat.x / width, yNorm: beat.y / height });
         break;
@@ -366,7 +464,7 @@ export default function BeatGame({ className }) {
     };
     canvas.addEventListener('click', handleClick);
     return () => canvas.removeEventListener('click', handleClick);
-  }, [triggerHitFeedback, startTrailFeedback]);
+  }, [triggerHitFeedback, startTrailFeedback, addScore]);
 
   // ─── START GAME ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -377,11 +475,21 @@ export default function BeatGame({ className }) {
     beatsRef.current = [];
     cursorDotRef.current = null;
     setScore(0);
+    scoreRef.current = 0;
 
     const audio = new Audio(activeSong.src);
     audio.volume = 0.8;
-    audio.loop = true;
+    audio.loop = false;
     audio.play().catch((err) => console.warn('Audio play failed:', err));
+    const handleSongEnded = () => {
+      setPendingResult({
+        song: activeSong,
+        score: scoreRef.current,
+        endedAtMs: Date.now(),
+      });
+      setActiveSong(null);
+    };
+    audio.addEventListener("ended", handleSongEnded);
     audioRef.current = audio;
 
     const beatInterval = (60 / activeSong.bpm) * 1000;
@@ -557,7 +665,7 @@ export default function BeatGame({ className }) {
           triggerHitFeedback(beat.x, beat.y, isPerfect);
           cursorClickTimeRef.current = performance.now();
           startTrailFeedback("hit");
-          setScore((s) => s + (isPerfect ? 30 : 10));
+          addScore(isPerfect ? 30 : 10);
           const { width, height } = canvasSizeRef.current;
           setLastHitPos({ xNorm: beat.x / width, yNorm: beat.y / height });
           fadingRef.current.push({ beatGroup: beat.beatGroup, approachGroup: beat.approachGroup, speed: 0.06 });
@@ -608,6 +716,7 @@ export default function BeatGame({ className }) {
     return () => {
       running = false;
       if (gameRafRef.current) { cancelAnimationFrame(gameRafRef.current); gameRafRef.current = null; }
+      audio.removeEventListener("ended", handleSongEnded);
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
       trailItemsRef.current.forEach(item => item.path?.remove());
       trailItemsRef.current = [];
@@ -623,7 +732,7 @@ export default function BeatGame({ className }) {
       trailStateRef.current = 'normal';
       trailFeedbackRef.current = { type: "normal", remaining: 0, index: 0 };
     };
-  }, [activeSong, isDrawActive, setCursorDotScale, triggerHitFeedback, startTrailFeedback]);
+  }, [activeSong, isDrawActive, setCursorDotScale, triggerHitFeedback, startTrailFeedback, addScore]);
 
   // ─── CURSOR TARGET from sensor data ───────────────────────────────────────
   useEffect(() => {
@@ -726,11 +835,16 @@ export default function BeatGame({ className }) {
     <div className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}>
       <div
         className="absolute z-0"
-        style={canvasRect
+        style={!isFullscreen && canvasRect
           ? { left: canvasRect.x, top: canvasRect.y, width: canvasRect.width, height: canvasRect.height }
           : { inset: 0 }}
       >
-        <MapillaryBg lastHitPos={lastHitPos} active={!!activeSong} onReady={() => setMapReady(true)} />
+        <MapillaryBg
+          lastHitPos={lastHitPos}
+          active={!!activeSong}
+          startLocation={activeSong?.location}
+          onReady={() => setMapReady(true)}
+        />
       </div>
       <canvas ref={canvasRef} resize="true" className="absolute bg-transparent z-10" />
 
@@ -803,7 +917,7 @@ export default function BeatGame({ className }) {
         H: grid · F: fullscreen
       </div>
 
-      {!activeSong && mapReady && !traced && (
+      {!activeSong && mapReady && !traced && !showHighScoreBoard && (
         <StarTraceScreen
           cursor={menuCursor}
           canvasRect={canvasRect}
@@ -812,12 +926,50 @@ export default function BeatGame({ className }) {
           isDrawActive={isDrawActive}
         />
       )}
-      {!activeSong && mapReady && traced && (
+      {!activeSong && mapReady && showHighScoreBoard && (
+        <HighScoreBoardOverlay rows={scoreboardRows} />
+      )}
+      {!activeSong && mapReady && traced && !pendingResult && !showHighScoreBoard && (
         <SongSelectOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
-          onStart={(song) => setActiveSong(song)}
+          onStart={(song) => {
+            setPendingResult(null);
+            setActiveSong(song);
+          }}
           isDrawActive={isDrawActive}
+        />
+      )}
+      {!activeSong && mapReady && traced && pendingResult && (
+        <PostGameOverlay
+          cursor={menuCursor}
+          canvasRect={canvasRect}
+          song={pendingResult.song}
+          score={pendingResult.score}
+          playedAtMs={pendingResult.endedAtMs}
+          isDrawActive={isDrawActive}
+          onSubmit={(name) => {
+            const nowMs = pendingResult.endedAtMs ?? Date.now();
+            const nowIso = new Date(nowMs).toISOString();
+            const row = {
+              id: `${name}-${nowMs}-${Math.floor(Math.random() * 1000)}`,
+              name,
+              score: pendingResult.score,
+              songTitle: pendingResult.song?.title ?? "Unknown Song",
+              songArtist: pendingResult.song?.artist ?? "",
+              playedAt: nowIso,
+              playedAtMs: nowMs,
+            };
+            addScoreboardRow(row);
+            socketRef.current?.emit("beat-score-submit", {
+              name,
+              score: pendingResult.score,
+              title: pendingResult.song?.title ?? null,
+              artist: pendingResult.song?.artist ?? null,
+              playedAt: nowIso,
+            });
+            setPendingResult(null);
+          }}
         />
       )}
     </div>

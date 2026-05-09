@@ -26,7 +26,7 @@ body {
   background-color: var(--pink-doll);
 }
 
-/* Retro emboss text — warm orange fill, multi-layer downward shadow creates 3D raised wall */
+/* Retro text — simplified for readability */
 .retro-text,
 .retro-text * {
   font-family: 'Fredoka One', 'Fredoka', sans-serif !important;
@@ -34,17 +34,10 @@ body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  -webkit-text-stroke: 0.06em #590044;
+  -webkit-text-stroke: 0.045em #590044;
   paint-order: stroke fill;
-  text-shadow:
-    0 1px 0 #d74db8,
-    0 2px 0 #c33ca7,
-    0 3px 0 #ad2c95,
-    0 4px 0 #972083,
-    0 5px 0 #7d1c6d,
-    0 6px 0 #641658,
-    0 8px 0 rgba(93, 22, 84, 0.74),
-    0 12px 20px rgba(35, 10, 46, 0.54);
+  letter-spacing: 0.035em;
+  text-shadow: 0 2px 6px rgba(35, 10, 46, 0.35);
 }
 
 /* Applied globally — every visible text inherits the retro look */

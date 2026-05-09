@@ -5,7 +5,7 @@ import 'mapillary-js/dist/mapillary.css';
 const START = MAP_START;
 const MAX_IMAGES = 150;
 const TURN_THRESHOLD_DEG = 45;
-const STEP_INTERVAL_MS = 1500;
+const STEP_INTERVAL_MS = 700;
 const PIXEL_COLS = 480*2;
 const PIXEL_ROWS = 270*2;
 
@@ -73,7 +73,7 @@ async function fetchCompassAngles(ids) {
   return map;
 }
 
-export default function MapillaryBg({ className, lastHitPos, active, onReady, onTurn }) {
+export default function MapillaryBg({ className, lastHitPos, active, onReady, onTurn, startLocation }) {
   const containerRef = useRef(null);
   const pixelCanvasRef = useRef(null);
   const viewerRef = useRef(null);
@@ -82,6 +82,7 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
   const stateRef = useRef({ mounted: true, imgIdx: 0 });
   const idsRef = useRef([]);
   const timerRef = useRef(null);
+  const isMovingRef = useRef(false);
   const activeRef = useRef(active);
   const [status, setStatus] = useState('loading');
   const [loadProgress, setLoadProgress] = useState(0);
@@ -89,6 +90,11 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
   const pixelateRef = useRef(true);
 
   useEffect(() => { activeRef.current = active; }, [active]);
+
+  const startLat =
+    Number.isFinite(Number(startLocation?.lat)) ? Number(startLocation.lat) : START.lat;
+  const startLng =
+    Number.isFinite(Number(startLocation?.lng)) ? Number(startLocation.lng) : START.lng;
 
   // P key toggle
   useEffect(() => {
@@ -199,6 +205,7 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
     const ro = new ResizeObserver(([entry]) => {
       canvas.width = entry.contentRect.width;
       canvas.height = entry.contentRect.height;
+      viewerRef.current?.resize?.();
     });
     ro.observe(canvas);
     return () => ro.disconnect();
@@ -210,11 +217,13 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
     if (!MAPILLARY_TOKEN) { setStatus('no-token'); return; }
 
     let viewer;
+    let cancelled = false;
 
     async function init() {
       try {
+        setStatus('loading');
         setLoadProgress(0.1);
-        const anchor = await fetchAnchorImage(START.lat, START.lng);
+        const anchor = await fetchAnchorImage(startLat, startLng);
         if (!anchor?.sequenceId) throw new Error('No anchor image found');
         setLoadProgress(0.3);
 
@@ -237,12 +246,14 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
         }
         turnSetRef.current = turnSet;
 
-        if (!stateRef.current.mounted) return;
+        if (!stateRef.current.mounted || cancelled) return;
 
         const { Viewer } = await import('mapillary-js');
-        if (!stateRef.current.mounted) return;
+        if (!stateRef.current.mounted || cancelled) return;
 
         idsRef.current = ids;
+        stateRef.current.imgIdx = 0;
+        isMovingRef.current = false;
 
         viewer = new Viewer({
           accessToken: MAPILLARY_TOKEN,
@@ -259,17 +270,37 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
         onReady?.();
 
         async function step() {
-          if (!stateRef.current.mounted) return;
+          if (!stateRef.current.mounted || cancelled) return;
           if (!activeRef.current) {
             timerRef.current = setTimeout(step, 300);
             return;
           }
+          if (isMovingRef.current) {
+            timerRef.current = setTimeout(step, 120);
+            return;
+          }
+
+          const total = idsRef.current.length;
+          if (!total) {
+            timerRef.current = setTimeout(step, 300);
+            return;
+          }
+
           const s = stateRef.current;
-          s.imgIdx = (s.imgIdx + 1) % idsRef.current.length;
-          const id = idsRef.current[s.imgIdx];
-          await viewer.moveTo(id).catch(() => {});
-          if (!stateRef.current.mounted) return;
-          if (turnSetRef.current.has(id)) onTurn?.();
+          const nextIdx = (s.imgIdx + 1) % total;
+          const id = idsRef.current[nextIdx];
+
+          isMovingRef.current = true;
+          try {
+            await viewer.moveTo(id);
+            if (!stateRef.current.mounted || cancelled) return;
+            s.imgIdx = nextIdx;
+            if (turnSetRef.current.has(id)) onTurn?.();
+          } catch {
+            // Keep current image if next one fails to load.
+          } finally {
+            isMovingRef.current = false;
+          }
           timerRef.current = setTimeout(step, STEP_INTERVAL_MS);
         }
 
@@ -284,11 +315,14 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
     init();
 
     return () => {
+      cancelled = true;
       stateRef.current.mounted = false;
       clearTimeout(timerRef.current);
       viewer?.remove();
+      viewerRef.current = null;
+      isMovingRef.current = false;
     };
-  }, []);
+  }, [startLat, startLng]);
 
   if (status === 'no-token') {
     return (
@@ -303,7 +337,7 @@ export default function MapillaryBg({ className, lastHitPos, active, onReady, on
   return (
     <div className={`absolute inset-0 ${className ?? ''}`}>
       {/* Mapillary renders here — hidden, sampled by pixel loop */}
-      <div style={{ position: 'absolute', width: 1280, height: 720, visibility: 'hidden', pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', inset: 0, visibility: 'hidden', pointerEvents: 'none' }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       </div>
 

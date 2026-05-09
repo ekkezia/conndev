@@ -22,6 +22,18 @@ export function IMUProvider({ children }) {
   const lastHoverBuzzAtRef = useRef(0);
   const [clear, setClear] = useState(false);
   const [drawState, setDrawState] = useState({ draw: false, timestamp: null });
+  const [powerState, setPowerState] = useState({
+    power: false,
+    previousPower: null,
+    transition: null,
+    timestamp: null,
+  });
+  const powerStateRef = useRef({
+    power: false,
+    previousPower: null,
+    transition: null,
+    timestamp: null,
+  });
   const [sessionsUpdated, setSessionsUpdated] = useState(null); // timestamp of last session update for animations
   const [click, setClick] = useState(false); // click state for animation
   const [phillips, setPhillips] = useState({
@@ -136,6 +148,49 @@ export function IMUProvider({ children }) {
   const socket = useRef(null);
 
   useEffect(() => {
+    powerStateRef.current = powerState;
+  }, [powerState]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const applyPower = (nextPower) => {
+      setPowerState((prev) => ({
+        power: nextPower === true,
+        previousPower: prev?.power === true,
+        transition:
+          prev?.power === true && nextPower !== true
+            ? 'off'
+            : prev?.power !== true && nextPower === true
+              ? 'on'
+              : 'none',
+        timestamp: Date.now(),
+      }));
+    };
+
+    // Dev helper for quick console simulation:
+    // window.magicPower.on(); window.magicPower.off(); window.magicPower.toggle();
+    window.magicPower = {
+      on: () => applyPower(true),
+      off: () => applyPower(false),
+      toggle: () => setPowerState((prev) => {
+        const next = !(prev?.power === true);
+        return {
+          power: next,
+          previousPower: prev?.power === true,
+          transition: next ? 'on' : 'off',
+          timestamp: Date.now(),
+        };
+      }),
+      state: () => powerStateRef.current,
+    };
+
+    return () => {
+      if (window.magicPower) delete window.magicPower;
+    };
+  }, []);
+
+  useEffect(() => {
     socket.current = io(REACT_APP_SERVER_URL, {
       path: '/socket.io',
       multiplex: false,
@@ -244,6 +299,16 @@ export function IMUProvider({ children }) {
       console.log('✍🏻 draw', data.draw, data.timestamp);
     });
 
+    socket.current.on('sensor-power', (data) => {
+      setPowerState({
+        power: data?.power === true,
+        previousPower: data?.previousPower === true,
+        transition: data?.transition ?? null,
+        timestamp: data?.timestamp ?? Date.now(),
+      });
+      console.log('🔌 power', data?.power === true ? 'ON' : 'OFF', data?.transition ?? 'sync');
+    });
+
     socket.current.on('sensor-processed-mouse-pos', (pos) => {
       setMousePos(pos);
       mousePosRef.current = pos;
@@ -332,6 +397,7 @@ export function IMUProvider({ children }) {
     selectedSessionData, // live data for the selected session (always fresh)
     sessionsUpdated, // timestamp for animation/update detection
     drawState,
+    powerState,
     phillips,
     setPhillips,
   };

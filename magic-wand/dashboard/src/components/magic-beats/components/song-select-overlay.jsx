@@ -1,11 +1,41 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import SONGS from "../../../config/game.json";
 import { useWandCursor } from "../hooks/use-wand-cursor";
 import WandCursorSVG from "./wand-cursor-svg";
 
 export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawActive = true }) {
   const [selected, setSelected] = useState(null);
+  const previewAudioRef = useRef(null);
+  const previewSrcRef = useRef(null);
   const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } = useWandCursor(cursor, canvasRect);
+
+  const stopPreview = () => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+    previewSrcRef.current = null;
+  };
+
+  const playPreview = (song) => {
+    if (!song?.src) return;
+    if (previewAudioRef.current && previewSrcRef.current === song.src) {
+      previewAudioRef.current.play().catch(() => {});
+      return;
+    }
+    stopPreview();
+    const preview = new Audio(song.src);
+    preview.volume = 0.35;
+    preview.loop = true;
+    preview.currentTime = 0;
+    preview.play().catch(() => {});
+    previewAudioRef.current = preview;
+    previewSrcRef.current = song.src;
+  };
+
+  useEffect(() => () => {
+    stopPreview();
+  }, []);
 
   return (
     <div
@@ -24,11 +54,21 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
         </div>
 
         <div className="flex flex-col gap-2">
-          {SONGS.map((song) => (
+          {SONGS.map((song, idx) => (
             <button
-              key={song.src}
+              key={`${song.src}-${idx}`}
               type="button"
-              onClick={() => setSelected(song)}
+              onClick={() => {
+                setSelected(song);
+              }}
+              onMouseEnter={() => {
+                setSelected(song);
+                playPreview(song);
+              }}
+              onFocus={() => {
+                setSelected(song);
+                playPreview(song);
+              }}
               className={`
                 beat-menu-option flex flex-col gap-0.5 text-left px-4 py-3 rounded-xl border transition-all duration-150
                 ${selected?.src === song.src ? "is-selected text-cream-soda" : "is-idle text-cream-soda/95"}
@@ -45,7 +85,11 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
         <button
           type="button"
           disabled={!selected}
-          onClick={() => selected && onStart(selected)}
+          onClick={() => {
+            if (!selected) return;
+            stopPreview();
+            onStart(selected);
+          }}
           className={`
             beat-menu-start w-full py-4 rounded-xl font-mono text-2xl font-bold tracking-wider uppercase transition-all duration-150
             ${selected ? "is-ready text-cream-soda active:scale-95 cursor-pointer" : "is-disabled text-cream-soda/80 cursor-not-allowed"}

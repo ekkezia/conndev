@@ -36,6 +36,17 @@ console.log(
 let mouseEnabled = false;
 let drawState = null; // 'start' | 'stop' | null
 
+function emitPowerState(power, previousPower = null, transition = 'sync', source = 'mqtt') {
+	if (typeof io === 'undefined') return;
+	io.emit('sensor-power', {
+		power: power === true,
+		previousPower: previousPower === true,
+		transition,
+		source,
+		timestamp: Date.now(),
+	});
+}
+
 // ===============================
 // Firebase Session Tracking
 // ===============================
@@ -472,6 +483,12 @@ mqttClient.on('message', async (topic, message) => {
 			console.log(`🖱 Power: ${mouseEnabled ? 'ON' : 'OFF'}`);
 			if (!wasEnabled && mouseEnabled) startNewSession();
 			else if (wasEnabled && !mouseEnabled) endSession();
+			emitPowerState(
+				mouseEnabled,
+				wasEnabled,
+				!wasEnabled && mouseEnabled ? 'on' : wasEnabled && !mouseEnabled ? 'off' : 'none',
+				'mqtt',
+			);
 		}
 		return;
 	}
@@ -518,6 +535,13 @@ mqttClient.on('error', (err) => console.error('MQTT error:', err));
 // ===============================
 io.on('connection', async (socket) => {
 	console.log('🔌 Client connected:', socket.id);
+	socket.emit('sensor-power', {
+		power: mouseEnabled === true,
+		previousPower: null,
+		transition: 'sync',
+		source: 'mqtt',
+		timestamp: Date.now(),
+	});
 
 	// Always fetch initial sessions from Firebase, regardless of IS_LOCAL
 	try {
