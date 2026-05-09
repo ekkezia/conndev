@@ -105,9 +105,11 @@ export default function BeatGame({ className }) {
   const trailStateTimerRef = useRef(null);
   const trailFeedbackRef = useRef({ type: "normal", remaining: 0, index: 0 });
   const socketRef = useRef(null);
+  const hasHandledInitialPowerSyncRef = useRef(false);
+  const prevDrawActiveRef = useRef(Boolean(drawState?.draw));
 
-  const isPowerOn = powerState?.power === true;
-  const showHighScoreBoard = !isPowerOn && !activeSong && !pendingResult;
+  const isMagicWandOn = Boolean(drawState?.draw);
+  const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -175,10 +177,30 @@ export default function BeatGame({ className }) {
       setTraced(false);
       return;
     }
+    if (
+      !hasHandledInitialPowerSyncRef.current &&
+      powerState?.transition === "sync" &&
+      powerState?.power === true
+    ) {
+      hasHandledInitialPowerSyncRef.current = true;
+      setTraced(false);
+      return;
+    }
     if (powerState?.transition === "off") {
       setTraced(true);
     }
-  }, [powerState?.transition, powerState?.timestamp]);
+  }, [powerState?.transition, powerState?.timestamp, powerState?.power]);
+
+  useEffect(() => {
+    const wasOn = prevDrawActiveRef.current;
+    const isOn = Boolean(drawState?.draw);
+    if (!wasOn && isOn) {
+      setTraced(false);
+    } else if (wasOn && !isOn) {
+      setTraced(true);
+    }
+    prevDrawActiveRef.current = isOn;
+  }, [drawState?.draw, drawState?.timestamp]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -927,7 +949,10 @@ export default function BeatGame({ className }) {
         />
       )}
       {!activeSong && mapReady && showHighScoreBoard && (
-        <HighScoreBoardOverlay rows={scoreboardRows} />
+        <HighScoreBoardOverlay
+          rows={scoreboardRows}
+          wandOn={isMagicWandOn}
+        />
       )}
       {!activeSong && mapReady && traced && !pendingResult && !showHighScoreBoard && (
         <SongSelectOverlay

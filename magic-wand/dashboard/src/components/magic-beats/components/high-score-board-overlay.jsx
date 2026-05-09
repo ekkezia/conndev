@@ -16,7 +16,7 @@ function formatPlayedAt(value) {
   });
 }
 
-export default function HighScoreBoardOverlay({ rows = [] }) {
+export default function HighScoreBoardOverlay({ rows = [], wandOn = false }) {
   const [offset, setOffset] = useState(0);
 
   const items = useMemo(() => {
@@ -60,7 +60,9 @@ export default function HighScoreBoardOverlay({ rows = [] }) {
         <div className="rounded-2xl border border-cream-soda/45 bg-cola-brown/70 p-6 shadow-2xl">
           <div className="flex items-center justify-between">
             <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">high scores</h2>
-            <p className="text-cream-soda/70 font-mono text-sm uppercase tracking-wider">wand power: off</p>
+            <p className="text-cream-soda/70 font-mono text-sm uppercase tracking-wider">
+              magicwand: {wandOn ? "on" : "off"}
+            </p>
           </div>
           <p className="text-cream-soda/55 font-mono text-sm mt-1">score · player · song · date/time</p>
 
