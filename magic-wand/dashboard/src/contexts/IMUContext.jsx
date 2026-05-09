@@ -294,7 +294,8 @@ export function IMUProvider({ children }) {
       // 3. trigger browser click at last known mouse position
       const clientPos = mouseClientPosRef.current || toClientPoint(mousePosRef.current);
       const target = getHoverTarget(clientPos) || hoverTargetRef.current;
-      if (target && clientPos) {
+      const handledByDom = Boolean(target && clientPos);
+      if (handledByDom) {
         const pointerEventSupported = typeof PointerEvent !== 'undefined';
         const makeMouseEvent = (type, buttons = 0) =>
           new MouseEvent(type, {
@@ -353,11 +354,19 @@ export function IMUProvider({ children }) {
         hasTarget: Boolean(target),
         tag: target?.tagName?.toLowerCase?.() ?? null,
         clickable: isClickableTarget(target),
+        handledByDom,
         timestamp: Date.now(),
       });
 
-      // Optional: also emit a global custom event
-      window.dispatchEvent(new Event('imu-click'));
+      // Global event for UI feedback and fallback click routing in cursor overlays.
+      window.dispatchEvent(
+        new CustomEvent('imu-click', {
+          detail: {
+            handledByDom,
+            clientPos: clientPos ? { x: clientPos.x, y: clientPos.y } : null,
+          },
+        }),
+      );
     });
 
     return () => {

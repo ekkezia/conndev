@@ -31,8 +31,32 @@ export function useWandCursor(cursor, canvasRect) {
   }, []);
 
   useEffect(() => {
-    const onImuClick = () => {
+    const onImuClick = (event) => {
       setClickKey((k) => k + 1);
+
+      // If IMUContext already clicked a valid DOM target, avoid double-clicking.
+      if (event?.detail?.handledByDom) return;
+
+      const cur = cursorRef.current;
+      if (!cur) return;
+      const el = document.elementFromPoint(cur.x, cur.y);
+      if (!el) return;
+      const target = el.closest(
+        "button, [role=\"button\"], a[href], .cursor-pointer, [data-clickable=\"true\"]",
+      );
+      if (!target) return;
+      if (typeof target.click === "function") {
+        target.click();
+        return;
+      }
+      target.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          clientX: cur.x,
+          clientY: cur.y,
+        }),
+      );
     };
     window.addEventListener("imu-click", onImuClick);
     return () => window.removeEventListener("imu-click", onImuClick);

@@ -7,6 +7,8 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
   const [selected, setSelected] = useState(null);
   const previewAudioRef = useRef(null);
   const previewSrcRef = useRef(null);
+  const songBySrcRef = useRef(new Map());
+  const startLockRef = useRef(false);
   const songButtonRefs = useRef([]);
   const listScrollRef = useRef(null);
   const hoveredSongSrcRef = useRef(null);
@@ -36,9 +38,38 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
     previewSrcRef.current = song.src;
   }, [stopPreview]);
 
+  useEffect(() => {
+    songBySrcRef.current = new Map(SONGS.map((song) => [song.src, song]));
+  }, []);
+
+  const startSong = useCallback((song) => {
+    if (!song || startLockRef.current) return;
+    startLockRef.current = true;
+    setSelected(song);
+    stopPreview();
+    onStart(song);
+    setTimeout(() => {
+      startLockRef.current = false;
+    }, 250);
+  }, [onStart, stopPreview]);
+
   useEffect(() => () => {
     stopPreview();
   }, [stopPreview]);
+
+  useEffect(() => {
+    const onImuClick = (event) => {
+      // If DOM click routing already hit a target, avoid duplicate song start.
+      if (event?.detail?.handledByDom) return;
+      const src = hoveredSongSrcRef.current;
+      if (!src) return;
+      const hoveredSong = songBySrcRef.current.get(src);
+      if (!hoveredSong) return;
+      startSong(hoveredSong);
+    };
+    window.addEventListener("imu-click", onImuClick);
+    return () => window.removeEventListener("imu-click", onImuClick);
+  }, [startSong]);
 
   const scrollListBy = useCallback((delta) => {
     const el = listScrollRef.current;
@@ -105,9 +136,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
                   songButtonRefs.current[idx] = el;
                 }}
                 onClick={() => {
-                  setSelected(song);
-                  stopPreview();
-                  onStart(song);
+                  startSong(song);
                 }}
                 onMouseEnter={() => {
                   setSelected(song);
