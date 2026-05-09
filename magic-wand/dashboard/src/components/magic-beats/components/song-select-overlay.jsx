@@ -8,6 +8,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
   const previewAudioRef = useRef(null);
   const previewSrcRef = useRef(null);
   const songButtonRefs = useRef([]);
+  const listScrollRef = useRef(null);
   const hoveredSongSrcRef = useRef(null);
   const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } = useWandCursor(cursor, canvasRect);
 
@@ -38,6 +39,12 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
   useEffect(() => () => {
     stopPreview();
   }, [stopPreview]);
+
+  const scrollListBy = useCallback((delta) => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ top: delta, behavior: "smooth" });
+  }, []);
 
   useEffect(() => {
     if (!activeCursor) return;
@@ -85,7 +92,29 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
         </div>
 
-        <div className="flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-cream-soda/55 font-mono text-sm uppercase tracking-wider">track list</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => scrollListBy(-160)}
+              className="beat-menu-option text-cream-soda px-3 py-1.5 rounded-lg font-mono text-sm"
+              data-clickable="true"
+            >
+              ▲ up
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollListBy(160)}
+              className="beat-menu-option text-cream-soda px-3 py-1.5 rounded-lg font-mono text-sm"
+              data-clickable="true"
+            >
+              ▼ down
+            </button>
+          </div>
+        </div>
+
+        <div ref={listScrollRef} className="flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1">
           {SONGS.map((song, idx) => (
             <button
               key={`${song.src}-${idx}`}

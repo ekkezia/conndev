@@ -78,40 +78,40 @@ export default function PostGameOverlay({
             </div>
           </div>
 
-          <div className="mt-4 flex flex-col gap-2">
+          <div className="mt-6 flex flex-col gap-4">
             {KEY_ROWS.map((row, idx) => (
-              <div key={idx} className="flex flex-wrap gap-2">
+              <div key={idx} className="flex flex-wrap gap-3">
                 {row.map((ch) => (
                   <button
                     key={ch}
                     type="button"
                     onClick={() => appendChar(ch)}
-                    className="beat-menu-option text-cream-soda px-3 py-2 rounded-lg font-mono text-lg min-w-[2.8rem]"
+                    className="beat-menu-option text-cream-soda px-5 py-3 rounded-xl font-mono text-2xl min-w-[4.4rem]"
                   >
                     {ch}
                   </button>
                 ))}
               </div>
             ))}
-            <div className="flex flex-wrap gap-2 pt-1">
+            <div className="flex flex-wrap gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => appendChar(" ")}
-                className="beat-menu-option text-cream-soda px-4 py-2 rounded-lg font-mono text-lg min-w-[6rem]"
+                className="beat-menu-option text-cream-soda px-6 py-3 rounded-xl font-mono text-xl min-w-[9rem]"
               >
                 SPACE
               </button>
               <button
                 type="button"
                 onClick={backspace}
-                className="beat-menu-option text-cream-soda px-4 py-2 rounded-lg font-mono text-lg min-w-[6rem]"
+                className="beat-menu-option text-cream-soda px-6 py-3 rounded-xl font-mono text-xl min-w-[9rem]"
               >
                 DELETE
               </button>
               <button
                 type="button"
                 onClick={clear}
-                className="beat-menu-option text-cream-soda px-4 py-2 rounded-lg font-mono text-lg min-w-[6rem]"
+                className="beat-menu-option text-cream-soda px-6 py-3 rounded-xl font-mono text-xl min-w-[9rem]"
               >
                 CLEAR
               </button>
@@ -120,7 +120,7 @@ export default function PostGameOverlay({
                 disabled={!canSubmit}
                 onClick={() => canSubmit && onSubmit(name.trim())}
                 className={`
-                  beat-menu-start rounded-lg px-6 py-2 font-mono text-lg font-bold uppercase
+                  beat-menu-start rounded-xl px-8 py-3 font-mono text-xl font-bold uppercase min-w-[12rem]
                   ${canSubmit ? "is-ready text-cream-soda cursor-pointer" : "is-disabled text-cream-soda/70 cursor-not-allowed"}
                 `}
               >

@@ -80,6 +80,19 @@ export function IMUProvider({ children }) {
     );
   }, []);
 
+  const getScrollableParent = useCallback((el) => {
+    let node = el?.parentElement ?? null;
+    while (node) {
+      const style = window.getComputedStyle(node);
+      const overflowY = style?.overflowY ?? '';
+      const canScrollStyle = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+      const canScrollNow = node.scrollHeight > node.clientHeight + 2;
+      if (canScrollStyle && canScrollNow) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }, []);
+
   const isClickableTarget = useCallback(
     (el) =>
       Boolean(
@@ -304,6 +317,14 @@ export function IMUProvider({ children }) {
 
       const activeDrag = activeDragRef.current;
       if (activeDrag && clientPos) {
+        if (activeDrag.scrollEl) {
+          const dy = clientPos.y - activeDrag.lastPos.y;
+          if (Math.abs(dy) > 0.01) {
+            activeDrag.scrollEl.scrollTop += dy * 1.2;
+          }
+          activeDrag.lastPos = clientPos;
+        }
+
         const moveEvent = new MouseEvent('mousemove', {
           bubbles: true,
           cancelable: true,
@@ -323,6 +344,8 @@ export function IMUProvider({ children }) {
           activeDragRef.current = {
             target: candidate.target,
             startPos: candidate.startPos,
+            scrollEl: candidate.scrollEl ?? null,
+            lastPos: clientPos,
           };
         }
       }
@@ -360,6 +383,7 @@ export function IMUProvider({ children }) {
           target,
           startPos: clientPos,
           isDragging: false,
+          scrollEl: getScrollableParent(target),
         };
         activeDragRef.current = null;
 
@@ -427,7 +451,7 @@ export function IMUProvider({ children }) {
       window.removeEventListener('mousemove', onMouseMove);
       setHoverTarget(null);
     };
-  }, [toClientPoint, getHoverTarget, getClickTarget, isClickableTarget, setHoverTarget]);
+  }, [toClientPoint, getHoverTarget, getClickTarget, isClickableTarget, setHoverTarget, getScrollableParent]);
 
   const value = {
     mouseEnabled,
