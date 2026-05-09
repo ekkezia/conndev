@@ -13,7 +13,7 @@ export const MAP_START = { lat: 40.6925, lng: -73.9872 };
 // Sound effects
 export const SFX = {
   perfect: '/effects/perfect.mp3',
-  click:   '/effects/perfect.mp3', // replace with /effects/click.mp3
+  click:   '/effects/click.mp3',
   starHit: '/effects/perfect.mp3', // replace with /effects/star-hit.mp3
   magic:   '/effects/game-bonus.mp3',
 };

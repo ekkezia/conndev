@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
 import { useEffect } from 'react';
 import { io } from 'socket.io-client';
-import { REACT_APP_SERVER_URL } from '../config';
+import { REACT_APP_SERVER_URL, SFX } from '../config';
+import { playSfx } from '../components/magic-beats/audio';
 
 const IMUContext = createContext(null);
 const DRAG_HOLD_MS = 260;
@@ -46,26 +47,6 @@ export function IMUProvider({ children }) {
   useEffect(() => {
     console.log('sessions updated, total sessions:', sessions.length, sensorData);
   }, [sensorData])
-  // Optional click tone to debug
-  const playClickTone = useCallback(() => {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(1000, ctx.currentTime); // pitch
-
-    gain.gain.setValueAtTime(0.2, ctx.currentTime); // volume
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
-
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + 0.1);
-  }, []);
-
   const toClientPoint = useCallback((screenPos) => {
     if (!screenPos) return null;
     const screenW = Math.max(window.screen.width || window.innerWidth || 1, 1);
@@ -353,8 +334,8 @@ export function IMUProvider({ children }) {
       setTimeout(() => setClick(false), 100);
       console.log('click!');
 
-      // 2. play tone
-      playClickTone();
+      // 2. play click sfx
+      playSfx(SFX.click, 0.55);
 
       // 3. trigger browser click at last known mouse position
       const clientPos = mouseClientPosRef.current || toClientPoint(mousePosRef.current);
@@ -446,7 +427,7 @@ export function IMUProvider({ children }) {
       window.removeEventListener('mousemove', onMouseMove);
       setHoverTarget(null);
     };
-  }, [playClickTone, toClientPoint, getHoverTarget, getClickTarget, isClickableTarget, setHoverTarget]);
+  }, [toClientPoint, getHoverTarget, getClickTarget, isClickableTarget, setHoverTarget]);
 
   const value = {
     mouseEnabled,

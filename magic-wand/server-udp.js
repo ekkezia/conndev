@@ -35,6 +35,11 @@ console.log(
 
 let mouseEnabled = false;
 let drawState = null; // 'start' | 'stop' | null
+const CLICK_DEBOUNCE_MS = Math.max(
+  0,
+  Number(process.env.WAND_CLICK_DEBOUNCE_MS) || 180,
+);
+let lastClickAtMs = 0;
 
 function parseDrawValue(raw) {
   if (raw == null) return null;
@@ -499,6 +504,12 @@ udpServer.on('message', async (msg, rinfo) => {
   // --- CLICK ---
   if (packetPath === 'kezia/imu/click') {
     try {
+      const now = Date.now();
+      if (now - lastClickAtMs < CLICK_DEBOUNCE_MS) {
+        console.log(`🖱 Click ignored (debounced ${now - lastClickAtMs}ms)`);
+        return;
+      }
+      lastClickAtMs = now;
       io.emit('sensor-click', { timestamp: Date.now() });
       console.log('🖱 Click relayed');
     } catch (err) {

@@ -23,7 +23,7 @@ const int CLICK_BTN_PIN = 12;
 #define NEOPIXEL_PIN 6
 #define STAR_LED_COUNT 5
 #define STATUS_PIXEL_INDEX 0
-#define PIXEL_ORDER NEO_GRB
+#define PIXEL_ORDER NEO_RGB
 Adafruit_NeoPixel pixels(STAR_LED_COUNT, NEOPIXEL_PIN, PIXEL_ORDER + NEO_KHZ800);
 
 // ================= TIMING =================

@@ -78,7 +78,8 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
       <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
         <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} isDrawActive={isDrawActive} />
       </svg>
-      <div className="p-10 w-full max-w-lg flex flex-col gap-6">
+      <div className="w-full max-w-2xl px-6">
+        <div className="rounded-3xl border border-cream-soda/45 bg-cola-brown/82 shadow-2xl backdrop-blur-md p-8 md:p-10 flex flex-col gap-6">
         <div>
           <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">MagicBeats</h2>
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
@@ -131,6 +132,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
         >
           {selected ? "start" : "select a track"}
         </button>
+        </div>
       </div>
     </div>
   );
