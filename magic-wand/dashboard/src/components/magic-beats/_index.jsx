@@ -785,8 +785,8 @@ export default function BeatGame({ className }) {
     // Fallback for menu/song-list control if packet shape changes:
     // use live server mouse position stream.
     if (mousePos?.x != null && mousePos?.y != null) {
-      const screenW = window.screen.width || window.innerWidth;
-      const screenH = window.screen.height || window.innerHeight;
+      const screenW = window.innerWidth || window.screen.width;
+      const screenH = window.innerHeight || window.screen.height;
       const { width, height } = canvasSizeRef.current;
       const cx = (mousePos.x / screenW) * width;
       const cy = (mousePos.y / screenH) * height;

@@ -62,16 +62,6 @@ export function IMUProvider({ children }) {
     return el.closest('button, [role="button"], a[href], .cursor-pointer, [data-clickable="true"]');
   }, []);
 
-  const getClickTarget = useCallback((clientPos) => {
-    if (!clientPos) return null;
-    const el = document.elementFromPoint(clientPos.x, clientPos.y);
-    if (!el) return null;
-    return (
-      el.closest('button, [role="button"], a[href], .cursor-pointer, [data-clickable="true"]') ||
-      el
-    );
-  }, []);
-
   const isClickableTarget = useCallback(
     (el) =>
       Boolean(
@@ -303,34 +293,60 @@ export function IMUProvider({ children }) {
 
       // 3. trigger browser click at last known mouse position
       const clientPos = mouseClientPosRef.current || toClientPoint(mousePosRef.current);
-      const target = getClickTarget(clientPos);
+      const target = getHoverTarget(clientPos) || hoverTargetRef.current;
       if (target && clientPos) {
-        target.dispatchEvent(
-          new MouseEvent('mousedown', {
+        const pointerEventSupported = typeof PointerEvent !== 'undefined';
+        const makeMouseEvent = (type, buttons = 0) =>
+          new MouseEvent(type, {
             bubbles: true,
             cancelable: true,
             clientX: clientPos.x,
             clientY: clientPos.y,
-            buttons: 1,
-          }),
+            buttons,
+          });
+
+        if (pointerEventSupported) {
+          target.dispatchEvent(
+            new PointerEvent('pointerdown', {
+              bubbles: true,
+              cancelable: true,
+              clientX: clientPos.x,
+              clientY: clientPos.y,
+              pointerType: 'mouse',
+              isPrimary: true,
+              buttons: 1,
+            }),
+          );
+        }
+        target.dispatchEvent(
+          makeMouseEvent('mousedown', 1),
+        );
+        if (pointerEventSupported) {
+          target.dispatchEvent(
+            new PointerEvent('pointerup', {
+              bubbles: true,
+              cancelable: true,
+              clientX: clientPos.x,
+              clientY: clientPos.y,
+              pointerType: 'mouse',
+              isPrimary: true,
+              buttons: 0,
+            }),
+          );
+        }
+        target.dispatchEvent(
+          makeMouseEvent('mouseup', 0),
         );
         target.dispatchEvent(
-          new MouseEvent('mouseup', {
-            bubbles: true,
-            cancelable: true,
-            clientX: clientPos.x,
-            clientY: clientPos.y,
-            buttons: 0,
-          }),
+          makeMouseEvent('click', 0),
         );
-        target.dispatchEvent(
-          new MouseEvent('click', {
-            bubbles: true,
-            cancelable: true,
-            clientX: clientPos.x,
-            clientY: clientPos.y,
-          }),
-        );
+        if (typeof target.click === 'function') {
+          try {
+            target.click();
+          } catch {}
+        }
+      } else {
+        console.warn('⚠️ imu-click no target', clientPos);
       }
 
       socket.current?.emit('ui-click', {
@@ -349,7 +365,7 @@ export function IMUProvider({ children }) {
       window.removeEventListener('mousemove', onMouseMove);
       setHoverTarget(null);
     };
-  }, [toClientPoint, getHoverTarget, getClickTarget, isClickableTarget, setHoverTarget]);
+  }, [toClientPoint, getHoverTarget, isClickableTarget, setHoverTarget]);
 
   const value = {
     mouseEnabled,
