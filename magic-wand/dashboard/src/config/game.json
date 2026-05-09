@@ -1,15 +1,5 @@
 [
   {
-    "title": "Quantum Love",
-    "artist": "Ezeta",
-    "src": "/music/quantumlove.wav",
-    "bpm": 60,
-    "location": {
-      "lat": 40.7584,
-      "lng": -73.9851
-    }
-  },
-  {
     "title": "Nieve Negra",
     "artist": "Ivan Abogado",
     "src": "/music/nievenegra.wav",
@@ -29,11 +19,41 @@
       "lng": -99.1334
     }
   },
-   {
-    "title": "Quantum Love",
+  {
+    "title": "NewITPIdea",
     "artist": "Ivan Abogado",
-    "src": "/music/quantumlove.wav",
-    "bpm": 85,
+    "src": "/music/newitpidea.wav",
+    "bpm": 100,
+    "location": {
+      "lat": 40.7576,
+      "lng": -73.9859
+    }
+  }
+   {
+    "title": "Nieve Negra",
+    "artist": "Ivan Abogado",
+    "src": "/music/nievenegra.wav",
+    "bpm": 95,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
+    "title": "ANIE",
+    "artist": "Ivan Abogado",
+    "src": "/music/ecosfera.wav",
+    "bpm": 120,
+    "location": {
+      "lat": 19.4328,
+      "lng": -99.1334
+    }
+  },
+  {
+    "title": "NewITPIdea",
+    "artist": "Ivan Abogado",
+    "src": "/music/newitpidea.wav",
+    "bpm": 100,
     "location": {
       "lat": 40.7576,
       "lng": -73.9859
