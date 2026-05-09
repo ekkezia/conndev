@@ -92,40 +92,6 @@ neoPixelType pixelOrderFromName(const String& order) {
   return NEO_GRB;
 }
 
-void applyPixelOrder(const String& order) {
-  pixels.updateType(pixelOrderFromName(order) + NEO_KHZ800);
-  clearPixels();
-  Serial.print("PIXEL ORDER -> ");
-  Serial.println(order);
-}
-
-void runLedDiagnosticsCommand() {
-  if (!Serial.available()) return;
-  String cmd = Serial.readStringUntil('\n');
-  cmd.trim();
-  cmd.toLowerCase();
-  if (!cmd.length()) return;
-
-  if (cmd == "led help") {
-    Serial.println("Commands: led amber | led fuchsia | led white | led off | order <rgb|rbg|grb|gbr|brg|bgr>");
-  } else if (cmd == "led amber") {
-    showAllPixels(rgb(DRAW_ANIM_R, DRAW_ANIM_G, DRAW_ANIM_B));
-  } else if (cmd == "led fuchsia") {
-    showAllPixels(rgb(DRAW_ON_R, DRAW_ON_G, DRAW_ON_B));
-  } else if (cmd == "led white") {
-    showAllPixels(rgb(255, 255, 255));
-  } else if (cmd == "led off") {
-    clearPixels();
-  } else if (cmd.startsWith("order ")) {
-    String order = cmd.substring(6);
-    order.trim();
-    applyPixelOrder(order);
-  } else {
-    Serial.print("Unknown cmd: ");
-    Serial.println(cmd);
-  }
-}
-
 void showAllPixels(uint32_t color) {
   for (int i = 0; i < STAR_LED_COUNT; i++) pixels.setPixelColor(i, color);
   pixels.show();
@@ -382,7 +348,6 @@ void setup() {
 
 void loop() {
   checkUdpFeedback();
-  runLedDiagnosticsCommand();
   unsigned long now = millis();
 
   if (!ntpBegun) {

@@ -122,6 +122,8 @@ export default function StarTraceScreen({ cursor, canvasRect, onComplete, onPerf
               cx={pt.x}
               cy={pt.y}
               r={isNext ? 10 : 7}
+              stroke="rgba(255, 79, 163, 0.95)"
+              strokeWidth={isNext ? 3 : 2}
               fill={
                 isHit
                   ? rainbowDotColor(i, dots.length, 0.95)
