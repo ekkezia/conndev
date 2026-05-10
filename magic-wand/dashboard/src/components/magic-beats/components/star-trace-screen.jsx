@@ -169,9 +169,6 @@ export default function StarTraceScreen({
               <stop offset="100%" stopColor="#b02dff" />
             </linearGradient>
           </defs>
-          <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.92)" letterSpacing="1.2">
-            SENSITIVITY
-          </text>
           <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
           <circle
             cx="60"
@@ -186,6 +183,9 @@ export default function StarTraceScreen({
           />
           <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
             {Number.isFinite(Number(sensitivityValue)) ? Number(sensitivityValue).toFixed(1) : "--"}
+          </text>
+          <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.96)" letterSpacing="1.2">
+            SENSITIVITY
           </text>
         </svg>
       </div>

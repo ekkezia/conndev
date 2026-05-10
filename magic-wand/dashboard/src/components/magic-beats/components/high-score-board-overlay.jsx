@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 const VISIBLE_ROWS = 8;
-const ROLL_INTERVAL_MS = 1600;
 
 function formatPlayedAt(value) {
   if (!value) return "Unknown time";
@@ -17,8 +16,6 @@ function formatPlayedAt(value) {
 }
 
 export default function HighScoreBoardOverlay({ rows = [], wandOn = false }) {
-  const [offset, setOffset] = useState(0);
-
   const items = useMemo(() => {
     const normalized = rows
       .filter(Boolean)
@@ -28,31 +25,18 @@ export default function HighScoreBoardOverlay({ rows = [], wandOn = false }) {
         score: Number.isFinite(Number(row.score)) ? Number(row.score) : 0,
         songTitle: String(row.songTitle ?? "Unknown Song"),
         playedAt: row.playedAt,
-      }));
+        playedAtMs: Number.isFinite(Number(row.playedAtMs))
+          ? Number(row.playedAtMs)
+          : new Date(row.playedAt ?? 0).getTime() || 0,
+      }))
+      .sort((a, b) => b.score - a.score || b.playedAtMs - a.playedAtMs);
     return normalized;
   }, [rows]);
 
-  useEffect(() => {
-    setOffset(0);
-  }, [items.length]);
-
-  useEffect(() => {
-    if (items.length <= 1) return;
-    const t = setInterval(() => {
-      setOffset((prev) => (prev + 1) % items.length);
-    }, ROLL_INTERVAL_MS);
-    return () => clearInterval(t);
-  }, [items.length]);
-
   const visible = useMemo(() => {
     if (!items.length) return [];
-    const list = [];
-    const n = Math.min(VISIBLE_ROWS, items.length);
-    for (let i = 0; i < n; i++) {
-      list.push(items[(offset + i) % items.length]);
-    }
-    return list;
-  }, [items, offset]);
+    return items.slice(0, VISIBLE_ROWS);
+  }, [items]);
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/74 backdrop-blur-md pointer-events-none">
