@@ -130,9 +130,6 @@ export default function SongSelectOverlay({
           <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">MagicBeats</h2>
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
         </div>
-
-        <p className="text-cream-soda/55 font-mono text-sm uppercase tracking-wider">track list</p>
-
         <div className="flex items-stretch gap-3">
           <div ref={listScrollRef} className="flex-1 flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1 select-none rounded-2xl bg-gradient-to-r from-[#ff4fa3]/22 via-[#ff8a86]/18 to-[#ffb43b]/24 p-2">
             {SONGS.map((song, idx) => (
