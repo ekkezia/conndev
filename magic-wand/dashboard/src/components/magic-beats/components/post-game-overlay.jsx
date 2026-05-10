@@ -202,7 +202,7 @@ export default function PostGameOverlay({
 								onClick={() => canSubmit && onSubmit(name.trim())}
 								className={`
                   beat-menu-start rounded-xl px-9 py-4 font-mono text-2xl font-bold uppercase min-w-[14rem]
-                  ${canSubmit ? 'is-ready text-cream-soda cursor-pointer' : 'is-disabled text-cream-soda/70 cursor-not-allowed'}
+                  ${canSubmit ? 'is-ready text-cream-soda cursor-pointer !bg-fuchsia-600 hover:!bg-fuchsia-500 !border-fuchsia-300' : 'is-disabled text-cream-soda/70 cursor-not-allowed !bg-fuchsia-900/40'}
                   ${hoveredButtonId === 'key-save' ? ' is-selected' : ''}
                 `}
 							>

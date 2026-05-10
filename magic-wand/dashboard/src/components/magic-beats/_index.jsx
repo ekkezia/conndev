@@ -1131,7 +1131,7 @@ export default function BeatGame({ className }) {
       </div>
       <canvas ref={canvasRef} resize="true" className="absolute bg-transparent z-10" />
 
-      {sensorData && sensorData.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
+      {/* {sensorData && sensorData.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
         <div className="absolute top-3 left-3 z-30 pointer-events-none rounded-lg border border-cyan-300/45 bg-black/55 px-2.5 py-1.5">
           <div className="flex items-center gap-2">
             <span className="text-cyan-200 font-mono text-[9px] uppercase tracking-wider">sens</span>
@@ -1148,7 +1148,7 @@ export default function BeatGame({ className }) {
             </span>
           </div>
         </div>
-      )}
+      )} */}
 
       {activeSong && gridVisible && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-cola-brown/60 text-cream-soda font-mono text-xs px-4 py-1.5 rounded-full flex items-center gap-4">
