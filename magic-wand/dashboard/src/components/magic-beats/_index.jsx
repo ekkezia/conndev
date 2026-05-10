@@ -40,6 +40,7 @@ const FLIP_GX_HIGH_THRESHOLD = 7.5;
 const FLIP_PATTERN_WINDOW_MS = 3200;
 const FLIP_TOGGLE_COOLDOWN_MS = 2200;
 const FLIP_STAGE_MIN_GAP_MS = 180;
+const GAME_HUD_RING_SIZE = 104;
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function BeatGame({ className }) {
@@ -65,6 +66,7 @@ export default function BeatGame({ className }) {
   const [instructionOpen, setInstructionOpen] = useState(false);
   const [instructionRunKey, setInstructionRunKey] = useState(0);
   const [instructionCompleted, setInstructionCompleted] = useState(false);
+  const [overlayCursor, setOverlayCursor] = useState(null);
   const hitFeedbackTimerRef = useRef(null);
   const perfectSfxRef = useRef(null);
   const greatSfxRef = useRef(null);
@@ -1115,6 +1117,24 @@ export default function BeatGame({ className }) {
     console.log("🎛️ sensitivity:", next, "timestamp:", latest?.timestamp ?? Date.now());
   }, [sensorData]);
 
+  useEffect(() => {
+    const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
+    const sx = Number(latest?.screenSize?.width);
+    const sy = Number(latest?.screenSize?.height);
+    const mx = Number(latest?.sensor?.mouseTargetX);
+    const my = Number(latest?.sensor?.mouseTargetY);
+    if (Number.isFinite(mx) && Number.isFinite(my) && Number.isFinite(sx) && Number.isFinite(sy) && sx > 0 && sy > 0) {
+      setOverlayCursor({
+        x: (mx / sx) * (window.innerWidth || sx),
+        y: (my / sy) * (window.innerHeight || sy),
+      });
+      return;
+    }
+    if (mousePos?.x != null && mousePos?.y != null) {
+      setOverlayCursor({ x: mousePos.x, y: mousePos.y });
+    }
+  }, [sensorData, mousePos]);
+
   return (
     <div className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}>
       <div
@@ -1162,6 +1182,46 @@ export default function BeatGame({ className }) {
             className="text-cream-soda/50 hover:text-cream-soda transition ml-1 leading-none"
             title="Back to menu"
           >↩</button>
+        </div>
+      )}
+
+      {activeSong && (
+        <div className="absolute top-3 left-3 z-30 pointer-events-none rounded-lg border border-cream-soda/45 bg-black/55 px-3 py-2">
+          <p className="text-cream-soda/80 font-mono text-[10px] uppercase tracking-wider">score</p>
+          <p className="text-cream-soda font-mono text-2xl font-bold tabular-nums leading-none mt-1">{score}</p>
+        </div>
+      )}
+
+      {activeSong && (
+        <div className="absolute top-3 right-3 pointer-events-none z-30">
+          <svg width={GAME_HUD_RING_SIZE} height={GAME_HUD_RING_SIZE} viewBox="0 0 120 120">
+            <defs>
+              <linearGradient id="gameSensitivityRingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#ff2457" />
+                <stop offset="100%" stopColor="#b02dff" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
+            <circle
+              cx="60"
+              cy="60"
+              r="46"
+              fill="none"
+              stroke="url(#gameSensitivityRingGradient)"
+              strokeWidth="12"
+              strokeLinecap="round"
+              strokeDasharray="248 70"
+              transform="rotate(-90 60 60)"
+            />
+            <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
+              {Number.isFinite(Number(sensorData?.length ? sensorData[sensorData.length - 1]?.sensor?.sensitivity : null))
+                ? Number(sensorData[sensorData.length - 1]?.sensor?.sensitivity).toFixed(1)
+                : "--"}
+            </text>
+            <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.96)" letterSpacing="1.2">
+              SENSITIVITY
+            </text>
+          </svg>
         </div>
       )}
 
@@ -1307,7 +1367,7 @@ export default function BeatGame({ className }) {
 
       {activeSong && stopPromptOpen && (
         <StopPromptOverlay
-          cursor={mousePos ?? menuCursor}
+          cursor={overlayCursor ?? mousePos ?? menuCursor}
           canvasRect={canvasRect}
           isDrawActive={isDrawActive}
           onConfirm={confirmStopToMenu}
