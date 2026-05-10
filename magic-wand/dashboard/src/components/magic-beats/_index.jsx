@@ -23,6 +23,7 @@ import SongSelectOverlay from "./components/song-select-overlay";
 import PostGameOverlay from "./components/post-game-overlay";
 import HighScoreBoardOverlay from "./components/high-score-board-overlay";
 import InstructionOverlay from "./components/instruction-overlay";
+import StopPromptOverlay from "./components/stop-prompt-overlay";
 
 const PERFECT_HIT_WORDS = ["PERFECT", "MAGIC", "WOW", "SASSY", "AMAZING"];
 const GOOD_HIT_WORDS = ["GREAT", "NICE", "OK", "GOOD"];
@@ -1307,34 +1308,13 @@ export default function BeatGame({ className }) {
       )}
 
       {activeSong && stopPromptOpen && (
-        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/65 backdrop-blur-sm">
-          <div className="w-full max-w-xl px-6">
-            <div className="rounded-2xl border border-cream-soda/55 bg-cola-brown/95 p-7 md:p-8 shadow-2xl">
-              <h3 className="text-cream-soda font-mono text-3xl font-bold tracking-tight">
-                r u sure u wanna stop making magic?
-              </h3>
-              <p className="text-cream-soda/70 font-mono text-sm mt-2">
-                your current run will end and return to song menu.
-              </p>
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={confirmStopToMenu}
-                  className="beat-menu-start is-ready text-cream-soda rounded-xl px-7 py-3 font-mono text-xl font-bold uppercase min-w-[8rem]"
-                >
-                  ya!
-                </button>
-                <button
-                  type="button"
-                  onClick={resumeFromStopPrompt}
-                  className="beat-menu-option text-cream-soda rounded-xl px-7 py-3 font-mono text-xl min-w-[8rem]"
-                >
-                  nope
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <StopPromptOverlay
+          cursor={mousePos ?? menuCursor}
+          canvasRect={canvasRect}
+          isDrawActive={isDrawActive}
+          onConfirm={confirmStopToMenu}
+          onCancel={resumeFromStopPrompt}
+        />
       )}
     </div>
   );
