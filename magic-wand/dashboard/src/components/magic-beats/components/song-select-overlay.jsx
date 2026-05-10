@@ -167,22 +167,22 @@ export default function SongSelectOverlay({
             ))}
           </div>
 
-          <div className="w-14 max-h-[50vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-2 flex flex-col items-center">
+          <div className="w-20 max-h-[50vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-2.5 flex flex-col items-center">
             <button
               type="button"
               onClick={() => scrollListBy(-180)}
-              className="beat-menu-option w-full h-12 rounded-lg font-mono text-xl text-cream-soda flex items-center justify-center"
+              className="beat-menu-option w-full h-14 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center"
               data-clickable="true"
             >
               ▲
             </button>
-            <div className="my-2 w-2 flex-1 rounded-full bg-cream-soda/20 relative overflow-hidden">
+            <div className="my-2.5 w-2.5 flex-1 rounded-full bg-cream-soda/20 relative overflow-hidden">
               <div className="absolute inset-x-0 top-1/4 h-1/4 rounded-full bg-cream-soda/55" />
             </div>
             <button
               type="button"
               onClick={() => scrollListBy(180)}
-              className="beat-menu-option w-full h-12 rounded-lg font-mono text-xl text-cream-soda flex items-center justify-center"
+              className="beat-menu-option w-full h-14 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center"
               data-clickable="true"
             >
               ▼

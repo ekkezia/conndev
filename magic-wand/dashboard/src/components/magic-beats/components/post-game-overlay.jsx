@@ -143,7 +143,7 @@ export default function PostGameOverlay({
 						{KEY_ROWS.map((row, idx) => (
 							<div
 								key={idx}
-								className="flex flex-wrap gap-3 justify-center items-center"
+								className="flex flex-wrap gap-4 justify-center items-center"
 							>
 								{row.map((ch) => (
 									<button
@@ -152,7 +152,7 @@ export default function PostGameOverlay({
 										ref={bindButtonRef(`key-${ch}`)}
 										onClick={() => appendChar(ch)}
 										className={`
-                      beat-menu-option text-cream-soda px-5 py-3 rounded-xl font-mono text-2xl min-w-[4.4rem]
+                      beat-menu-option text-cream-soda px-6 py-4 rounded-xl font-mono text-3xl min-w-[5.4rem]
                       ${hoveredButtonId === `key-${ch}` ? 'is-selected' : ''}
                     `}
 									>
@@ -161,13 +161,13 @@ export default function PostGameOverlay({
 								))}
 							</div>
 						))}
-						<div className="flex flex-wrap gap-3 pt-2 justify-center items-center">
+						<div className="flex flex-wrap gap-4 pt-3 justify-center items-center">
 							<button
 								type="button"
 								ref={bindButtonRef('key-space')}
 								onClick={() => appendChar(' ')}
 								className={`
-                  beat-menu-option text-cream-soda px-6 py-3 rounded-xl font-mono text-xl min-w-[9rem]
+                  beat-menu-option text-cream-soda px-7 py-4 rounded-xl font-mono text-2xl min-w-[11rem]
                   ${hoveredButtonId === 'key-space' ? 'is-selected' : ''}
                 `}
 							>
@@ -178,7 +178,7 @@ export default function PostGameOverlay({
 								ref={bindButtonRef('key-delete')}
 								onClick={backspace}
 								className={`
-                  beat-menu-option text-cream-soda px-6 py-3 rounded-xl font-mono text-xl min-w-[9rem]
+                  beat-menu-option text-cream-soda px-7 py-4 rounded-xl font-mono text-2xl min-w-[11rem]
                   ${hoveredButtonId === 'key-delete' ? 'is-selected' : ''}
                 `}
 							>
@@ -189,7 +189,7 @@ export default function PostGameOverlay({
 								ref={bindButtonRef('key-clear')}
 								onClick={clear}
 								className={`
-                  beat-menu-option text-cream-soda px-6 py-3 rounded-xl font-mono text-xl min-w-[9rem]
+                  beat-menu-option text-cream-soda px-7 py-4 rounded-xl font-mono text-2xl min-w-[11rem]
                   ${hoveredButtonId === 'key-clear' ? 'is-selected' : ''}
                 `}
 							>
@@ -201,7 +201,7 @@ export default function PostGameOverlay({
 								ref={bindButtonRef('key-save')}
 								onClick={() => canSubmit && onSubmit(name.trim())}
 								className={`
-                  beat-menu-start rounded-xl px-8 py-3 font-mono text-xl font-bold uppercase min-w-[12rem]
+                  beat-menu-start rounded-xl px-9 py-4 font-mono text-2xl font-bold uppercase min-w-[14rem]
                   ${canSubmit ? 'is-ready text-cream-soda cursor-pointer' : 'is-disabled text-cream-soda/70 cursor-not-allowed'}
                   ${hoveredButtonId === 'key-save' ? ' is-selected' : ''}
                 `}
