@@ -55,27 +55,30 @@ export default function HighScoreBoardOverlay({ rows = [], wandOn = false }) {
   }, [items, offset]);
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/70 backdrop-blur-sm pointer-events-none">
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/74 backdrop-blur-md pointer-events-none">
       <div className="w-full max-w-5xl px-6">
-        <div className="rounded-2xl border border-cream-soda/45 bg-cola-brown/84 p-6 shadow-2xl">
+        <div className="rounded-2xl border border-cream-soda/35 bg-gradient-to-br from-[#ff4fa3]/35 via-[#ff8a86]/35 to-[#ffb43b]/80 p-6 shadow-2xl"
+          style={{
+            background: 'linear-gradient(135deg, rgba(255,79,163,0.5) 0%, rgba(255,138,134,0.5) 50%, rgba(255,180,59,0.5) 100%)',
+          }}
+        >
           <div className="flex items-center justify-between">
-            <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">high scores</h2>
+            <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">the prodigy list</h2>
             <p className="text-cream-soda/70 font-mono text-sm uppercase tracking-wider">
               magicwand: {wandOn ? "on" : "off"}
             </p>
           </div>
-          <p className="text-cream-soda/55 font-mono text-sm mt-1">score · player · song · date/time</p>
 
           {!visible.length ? (
-            <div className="mt-6 rounded-xl border border-cream-soda/25 bg-black/45 px-5 py-6 text-cream-soda/70 font-mono text-lg">
-              no scores yet. play a song to create the first entry.
+            <div className="mt-6 rounded-xl border border-cream-soda/35 bg-gradient-to-r from-[#ff4fa3]/26 to-[#ffb43b]/24 px-5 py-6 text-cream-soda/82 font-mono text-lg">
+              no scores yet. play a song!
             </div>
           ) : (
             <div className="mt-4 flex flex-col gap-2">
               {visible.map((row) => (
                 <div
                   key={row.id}
-                  className="rounded-xl border border-cream-soda/35 bg-black/45 px-4 py-3 flex items-center justify-between gap-4"
+                  className="rounded-xl border border-cream-soda/40 bg-gradient-to-r from-[#ff4fa3]/24 via-[#ff8a86]/18 to-[#ffb43b]/26 px-4 py-3 flex items-center justify-between gap-4"
                 >
                   <div className="min-w-0">
                     <p className="text-cream-soda font-mono text-xl leading-tight truncate">

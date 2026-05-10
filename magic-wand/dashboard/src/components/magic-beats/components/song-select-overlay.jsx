@@ -108,7 +108,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
 
   return (
     <div
-      className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/75 backdrop-blur-sm"
+      className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/82 backdrop-blur-md"
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
       onClick={triggerClick}
@@ -117,7 +117,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
         <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} isDrawActive={isDrawActive} />
       </svg>
       <div className="w-full max-w-2xl px-6">
-        <div className="rounded-3xl border border-cream-soda/45 bg-cola-brown/82 shadow-2xl backdrop-blur-md p-8 md:p-10 flex flex-col gap-6">
+        <div className="rounded-3xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/48 via-[#ff8a86]/34 to-[#ffb43b]/42 shadow-2xl backdrop-blur-md p-8 md:p-10 flex flex-col gap-6">
         <div>
           <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">MagicBeats</h2>
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
@@ -126,7 +126,7 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
         <p className="text-cream-soda/55 font-mono text-sm uppercase tracking-wider">track list</p>
 
         <div className="flex items-stretch gap-3">
-          <div ref={listScrollRef} className="flex-1 flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1 select-none">
+          <div ref={listScrollRef} className="flex-1 flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1 select-none rounded-2xl bg-gradient-to-r from-[#ff4fa3]/22 via-[#ff8a86]/18 to-[#ffb43b]/24 p-2">
             {SONGS.map((song, idx) => (
               <button
                 key={`${song.src}-${idx}`}

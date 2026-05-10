@@ -52,6 +52,8 @@ export default function BeatGame({ className }) {
   const [mapReady, setMapReady] = useState(false);
   const [hitFeedback, setHitFeedback] = useState(null);
   const [scoreboardRows, setScoreboardRows] = useState([]);
+  const [forceSongMenu, setForceSongMenu] = useState(false);
+  const [stopPromptOpen, setStopPromptOpen] = useState(false);
   const hitFeedbackTimerRef = useRef(null);
   const perfectSfxRef = useRef(null);
   const greatSfxRef = useRef(null);
@@ -106,6 +108,8 @@ export default function BeatGame({ className }) {
   const audioRef = useRef(null);
   const idleAudioRef = useRef(null);
   const scoreRef = useRef(0);
+  const isGamePausedRef = useRef(false);
+  const isDrawActiveRef = useRef(false);
 
   const trailItemsRef = useRef([]);
   const lastTrailPosRef = useRef(null);
@@ -116,9 +120,10 @@ export default function BeatGame({ className }) {
   const socketRef = useRef(null);
   const hasHandledInitialPowerSyncRef = useRef(false);
   const prevDrawActiveRef = useRef(Boolean(drawState?.draw));
+  const prevDrawStopPromptRef = useRef(Boolean(drawState?.draw));
 
   const isMagicWandOn = Boolean(drawState?.draw);
-  const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult;
+  const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -182,6 +187,39 @@ export default function BeatGame({ className }) {
   })();
 
   useEffect(() => {
+    isDrawActiveRef.current = isDrawActive;
+  }, [isDrawActive]);
+
+  const openStopPrompt = useCallback(() => {
+    if (!activeSong || stopPromptOpen) return;
+    setStopPromptOpen(true);
+    isGamePausedRef.current = true;
+    if (audioRef.current && !audioRef.current.paused) {
+      audioRef.current.pause();
+    }
+  }, [activeSong, stopPromptOpen]);
+
+  const resumeFromStopPrompt = useCallback(() => {
+    setStopPromptOpen(false);
+    isGamePausedRef.current = false;
+    if (audioRef.current && audioRef.current.paused) {
+      audioRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  const confirmStopToMenu = useCallback(() => {
+    setStopPromptOpen(false);
+    isGamePausedRef.current = false;
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    setPendingResult(null);
+    setActiveSong(null);
+    setTraced(true);
+    setForceSongMenu(true);
+  }, []);
+
+  useEffect(() => {
     if (powerState?.transition === "on") {
       setTraced(false);
       return;
@@ -210,6 +248,15 @@ export default function BeatGame({ className }) {
     }
     prevDrawActiveRef.current = isOn;
   }, [drawState?.draw, drawState?.timestamp]);
+
+  useEffect(() => {
+    const wasOn = prevDrawStopPromptRef.current;
+    const isOn = Boolean(drawState?.draw);
+    if (activeSong && wasOn && !isOn) {
+      openStopPrompt();
+    }
+    prevDrawStopPromptRef.current = isOn;
+  }, [activeSong, drawState?.draw, drawState?.timestamp, openStopPrompt]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -489,6 +536,7 @@ export default function BeatGame({ className }) {
     if (!canvas) return;
     const handleClick = (e) => {
       if (!paperReadyRef.current || !audioRef.current) return;
+      if (isGamePausedRef.current) return;
       const rect = canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
@@ -530,6 +578,8 @@ export default function BeatGame({ className }) {
 
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     if (gameLayerRef.current) { gameLayerRef.current.removeChildren(); paper.view.draw(); }
+    setStopPromptOpen(false);
+    isGamePausedRef.current = false;
     beatsRef.current = [];
     cursorDotRef.current = null;
     setScore(0);
@@ -559,6 +609,10 @@ export default function BeatGame({ className }) {
       if (!running) return;
       gameRafRef.current = requestAnimationFrame(gameLoop);
       if (!gameLayerRef.current || !cursorLayerRef.current) return;
+      if (isGamePausedRef.current) {
+        paper.view.draw();
+        return;
+      }
 
       const { width, height } = canvasSizeRef.current;
 
@@ -574,7 +628,7 @@ export default function BeatGame({ className }) {
           lerp.y = pos.y;
         }
 
-        const dotColor = isDrawActive
+        const dotColor = isDrawActiveRef.current
           ? new paper.Color(1, 0.706, 0.231, 0.9)
           : new paper.Color(0.62, 0.62, 0.62, 0.9);
 
@@ -799,7 +853,7 @@ export default function BeatGame({ className }) {
       trailStateRef.current = 'normal';
       trailFeedbackRef.current = { type: "normal", remaining: 0, index: 0 };
     };
-  }, [activeSong, isDrawActive, setCursorDotScale, triggerHitFeedback, startTrailFeedback, addScore]);
+  }, [activeSong, setCursorDotScale, triggerHitFeedback, startTrailFeedback, addScore]);
 
   // ─── CURSOR TARGET from sensor data ───────────────────────────────────────
   useEffect(() => {
@@ -1005,6 +1059,7 @@ export default function BeatGame({ className }) {
           canvasRect={canvasRect}
           onStart={(song) => {
             setPendingResult(null);
+            setForceSongMenu(false);
             setActiveSong(song);
           }}
           isDrawActive={isDrawActive}
@@ -1041,6 +1096,37 @@ export default function BeatGame({ className }) {
             setPendingResult(null);
           }}
         />
+      )}
+
+      {activeSong && stopPromptOpen && (
+        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/65 backdrop-blur-sm">
+          <div className="w-full max-w-xl px-6">
+            <div className="rounded-2xl border border-cream-soda/55 bg-cola-brown/95 p-7 md:p-8 shadow-2xl">
+              <h3 className="text-cream-soda font-mono text-3xl font-bold tracking-tight">
+                r u sure u wanna stop making magic?
+              </h3>
+              <p className="text-cream-soda/70 font-mono text-sm mt-2">
+                your current run will end and return to song menu.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={confirmStopToMenu}
+                  className="beat-menu-start is-ready text-cream-soda rounded-xl px-7 py-3 font-mono text-xl font-bold uppercase min-w-[8rem]"
+                >
+                  ya!
+                </button>
+                <button
+                  type="button"
+                  onClick={resumeFromStopPrompt}
+                  className="beat-menu-option text-cream-soda rounded-xl px-7 py-3 font-mono text-xl min-w-[8rem]"
+                >
+                  nope
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
