@@ -15,7 +15,7 @@ const STEPS = {
 };
 
 const IMAGE_BY_STEP = {
-  [STEPS.INTRO]: "/images/magic-wand-product.png",
+  [STEPS.INTRO]: "/images/magic-wand-instruction.png",
   [STEPS.POWER]: "/images/magic-wand-power.png",
   [STEPS.CLICK]: "/images/magic-wand-click.png",
   [STEPS.SENSITIVITY]: "/images/magic-wand-sensitivity.png",
@@ -31,6 +31,7 @@ const COPY_BY_STEP = {
     "Adjust the sensitivity level that matches your magical movement speed.",
   [STEPS.DRAW]: "Press the DRAW START/STOP yellow button to play MagicBeats.",
 };
+const TRACE_RING_SIZE = 112;
 
 function getLatestSensitivity(sensorData) {
   const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
@@ -38,25 +39,35 @@ function getLatestSensitivity(sensorData) {
   return Number.isFinite(value) ? value : null;
 }
 
-function SensitivityChip({ sensorData }) {
-  const sensitivity = getLatestSensitivity(sensorData);
-  if (!Number.isFinite(sensitivity)) return null;
-  const pct = Math.max(0, Math.min(100, (sensitivity / 10) * 100));
-
+function SensitivityRing({ sensitivityValue = null }) {
   return (
-    <div className="absolute top-3 left-3 z-20 pointer-events-none rounded-lg border border-cyan-300/45 bg-black/55 px-2.5 py-1.5">
-      <div className="flex items-center gap-2">
-        <span className="text-cyan-200 font-mono text-[9px] uppercase tracking-wider">sensitivity</span>
-        <div className="w-20 h-1.5 rounded bg-cyan-950/70 overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-cyan-500 to-cyan-300"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <span className="text-cyan-100 font-mono text-[10px] tabular-nums">
-          {sensitivity.toFixed(1)}
-        </span>
-      </div>
+    <div className="absolute top-4 right-4 pointer-events-none z-20">
+      <svg width={TRACE_RING_SIZE} height={TRACE_RING_SIZE} viewBox="0 0 120 120">
+        <defs>
+          <linearGradient id="traceRingGradientInstruction" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#ff2457" />
+            <stop offset="100%" stopColor="#b02dff" />
+          </linearGradient>
+        </defs>
+        <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
+        <circle
+          cx="60"
+          cy="60"
+          r="46"
+          fill="none"
+          stroke="url(#traceRingGradientInstruction)"
+          strokeWidth="12"
+          strokeLinecap="round"
+          strokeDasharray="248 70"
+          transform="rotate(-90 60 60)"
+        />
+        <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
+          {Number.isFinite(Number(sensitivityValue)) ? Number(sensitivityValue).toFixed(1) : "--"}
+        </text>
+        <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.96)" letterSpacing="1.2">
+          SENSITIVITY
+        </text>
+      </svg>
     </div>
   );
 }
@@ -232,13 +243,13 @@ export default function InstructionOverlay({
         />
       </svg>
 
-      <SensitivityChip sensorData={sensorData} />
+      <SensitivityRing sensitivityValue={latestSensitivity} />
 
       <div className="w-full max-w-5xl px-6">
         <div className="rounded-3xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/52 via-[#ff8a86]/36 to-[#ffb43b]/48 shadow-2xl backdrop-blur-md p-7 md:p-9">
           <div className="flex items-center justify-between gap-4 mb-6">
             <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">
-              magicwand guide
+              Learn to MagicWand™
             </h2>
             <p className="text-cream-soda/70 font-mono text-xs uppercase tracking-wider">
               flip front-back-front to toggle guide
@@ -252,8 +263,8 @@ export default function InstructionOverlay({
                 alt="Magic wand instruction"
                 className="w-full max-h-[360px] object-contain rounded-xl"
                 onError={(event) => {
-                  if (event.currentTarget.src.includes("magic-wand-product.png")) return;
-                  event.currentTarget.src = "/images/magic-wand-product.png";
+                  if (event.currentTarget.src.includes("magic-wand-instruction.png")) return;
+                  event.currentTarget.src = "/images/magic-wand-instruction.png";
                 }}
               />
             </div>

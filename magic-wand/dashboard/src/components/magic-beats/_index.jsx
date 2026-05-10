@@ -35,7 +35,8 @@ const BEAT_HUE_ON_TIME = 310;
 const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
 const INSTRUCTION_DONE_STORAGE_KEY = "magicbeats-instruction-complete-v1";
-const FLIP_GX_THRESHOLD = 3.2;
+const FLIP_GX_HIGH_THRESHOLD = 3.8;
+const FLIP_GX_NEUTRAL_THRESHOLD = 1.2;
 const FLIP_PATTERN_WINDOW_MS = 3200;
 const FLIP_TOGGLE_COOLDOWN_MS = 2200;
 
@@ -129,11 +130,10 @@ export default function BeatGame({ className }) {
   const socketRef = useRef(null);
   const prevDrawStopPromptRef = useRef(Boolean(drawState?.draw));
   const lastLoggedSensitivityRef = useRef(null);
-  const flipOrientationRef = useRef(null);
-  const flipEventRef = useRef([]);
   const lastFlipToggleAtRef = useRef(0);
   const flipStageRef = useRef(0); // 0 wait-front, 1 wait-back, 2 wait-front
   const flipStartedAtRef = useRef(0);
+  const flipNeutralReadyRef = useRef(true);
 
   const isMagicWandOn = Boolean(drawState?.draw);
   const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
@@ -204,6 +204,12 @@ export default function BeatGame({ className }) {
     return false;
   })();
 
+  const canOpenInstructionNow = useCallback(() => {
+    if (!instructionCompleted) return true;
+    // After first completion, only allow reopening when wand draw is OFF and gameplay is idle.
+    return !isDrawActive && !activeSong && !pendingResult;
+  }, [instructionCompleted, isDrawActive, activeSong, pendingResult]);
+
   useEffect(() => {
     isDrawActiveRef.current = isDrawActive;
   }, [isDrawActive]);
@@ -268,17 +274,21 @@ export default function BeatGame({ className }) {
   }, [activeSong]);
 
   const enterInstructionOverlay = useCallback(() => {
+    if (!canOpenInstructionNow()) {
+      console.log("🪄 instruction open blocked: completed tutorial requires draw OFF + idle game");
+      return false;
+    }
     console.log("🪄 instruction open request");
     setInstructionRunKey((k) => k + 1);
     setInstructionOpen(true);
-  }, []);
+    return true;
+  }, [canOpenInstructionNow]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.magicInstruction = {
       open: () => {
-        enterInstructionOverlay();
-        return true;
+        return enterInstructionOverlay();
       },
       close: () => {
         setInstructionOpen(false);
@@ -286,15 +296,27 @@ export default function BeatGame({ className }) {
         return true;
       },
       toggle: () => {
-        setInstructionOpen((prev) => {
-          if (prev) {
-            console.log("🪄 instruction toggle ignored: already open (locked until complete)");
-            return prev;
-          }
-          console.log("🪄 instruction toggle -> OPEN");
-          setInstructionRunKey((k) => k + 1);
+        if (instructionOpen) {
+          console.log("🪄 instruction toggle ignored: already open (locked until complete)");
           return true;
-        });
+        }
+        return enterInstructionOverlay();
+      },
+      canOpenNow: () => canOpenInstructionNow(),
+      gate: () => ({
+        instructionCompleted,
+        drawOn: isDrawActive,
+        beatPlaying: Boolean(activeSong),
+        pendingResult: Boolean(pendingResult),
+        canOpen: canOpenInstructionNow(),
+      }),
+      debugComplete: () => {
+        setInstructionCompleted(true);
+        try {
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(INSTRUCTION_DONE_STORAGE_KEY, "1");
+          }
+        } catch {}
         return true;
       },
       state: () => ({
@@ -305,10 +327,22 @@ export default function BeatGame({ className }) {
     return () => {
       if (window.magicInstruction) delete window.magicInstruction;
     };
-  }, [enterInstructionOverlay, instructionOpen, instructionRunKey]);
+  }, [
+    enterInstructionOverlay,
+    instructionOpen,
+    instructionRunKey,
+    canOpenInstructionNow,
+    instructionCompleted,
+    isDrawActive,
+    activeSong,
+    pendingResult,
+  ]);
 
   useEffect(() => {
     console.log("🪄 instruction-view:", instructionOpen ? "OPEN" : "CLOSED");
+    flipStageRef.current = 0;
+    flipStartedAtRef.current = 0;
+    flipNeutralReadyRef.current = true;
   }, [instructionOpen]);
 
   useEffect(() => {
@@ -316,34 +350,36 @@ export default function BeatGame({ className }) {
     if (!latest?.sensor) return;
     const gx = Number(latest.sensor.gx);
     if (!Number.isFinite(gx)) return;
-
-    const orientation =
-      gx >= FLIP_GX_THRESHOLD ? "front" : gx <= -FLIP_GX_THRESHOLD ? "back" : null;
-    if (!orientation) return;
-    if (flipOrientationRef.current === orientation) return;
-    flipOrientationRef.current = orientation;
-
     const now = Date.now();
-    const nextEvents = [...flipEventRef.current, { orientation, at: now, gx }]
-      .filter((evt) => now - evt.at <= FLIP_PATTERN_WINDOW_MS);
-    flipEventRef.current = nextEvents;
 
     if (instructionOpen) {
-      console.log("🪄 flip ignored: instruction already open");
+      return;
+    }
+
+    if (!canOpenInstructionNow()) {
       return;
     }
 
     const cooldownOk = now - lastFlipToggleAtRef.current > FLIP_TOGGLE_COOLDOWN_MS;
     if (!cooldownOk) {
-      console.log("🪄 flip cooldown active");
       return;
     }
 
+    if (Math.abs(gx) <= FLIP_GX_NEUTRAL_THRESHOLD) {
+      flipNeutralReadyRef.current = true;
+      return;
+    }
+
+    const orientation =
+      gx >= FLIP_GX_HIGH_THRESHOLD ? "front" : gx <= -FLIP_GX_HIGH_THRESHOLD ? "back" : null;
+    if (!orientation) return;
+
     const stage = flipStageRef.current;
     if (stage === 0) {
-      if (orientation === "front") {
+      if (orientation === "front" && flipNeutralReadyRef.current) {
         flipStageRef.current = 1;
         flipStartedAtRef.current = now;
+        flipNeutralReadyRef.current = false;
         console.log("🪄 flip stage 1/3: FRONT", { gx: gx.toFixed(2) });
       }
       return;
@@ -351,34 +387,38 @@ export default function BeatGame({ className }) {
 
     if (now - flipStartedAtRef.current > FLIP_PATTERN_WINDOW_MS) {
       console.log("🪄 flip sequence timeout, resetting");
-      flipStageRef.current = orientation === "front" ? 1 : 0;
-      flipStartedAtRef.current = now;
+      flipStageRef.current = 0;
+      flipStartedAtRef.current = 0;
+      flipNeutralReadyRef.current = true;
       return;
     }
 
     if (stage === 1) {
-      if (orientation === "back") {
+      if (orientation === "back" && flipNeutralReadyRef.current) {
         flipStageRef.current = 2;
+        flipNeutralReadyRef.current = false;
         console.log("🪄 flip stage 2/3: BACK", { gx: gx.toFixed(2) });
-      } else if (orientation === "front") {
-        console.log("🪄 flip stage 1/3 re-affirm FRONT", { gx: gx.toFixed(2) });
       }
       return;
     }
 
     if (stage === 2) {
-      if (orientation === "front") {
+      if (orientation === "front" && flipNeutralReadyRef.current) {
         console.log("🪄 flip stage 3/3: FRONT -> TOGGLE instruction");
         flipStageRef.current = 0;
         flipStartedAtRef.current = 0;
-        flipEventRef.current = [];
+        flipNeutralReadyRef.current = false;
         lastFlipToggleAtRef.current = now;
         enterInstructionOverlay();
-      } else if (orientation === "back") {
-        console.log("🪄 flip stage 2/3 re-affirm BACK", { gx: gx.toFixed(2) });
       }
     }
-  }, [sensorData, instructionOpen, enterInstructionOverlay]);
+  }, [
+    sensorData,
+    instructionOpen,
+    enterInstructionOverlay,
+    instructionCompleted,
+    canOpenInstructionNow,
+  ]);
 
   useEffect(() => {
     if (activeSong || isPreviewingSong) {
@@ -1243,6 +1283,10 @@ export default function BeatGame({ className }) {
           instructionCompleted={instructionCompleted}
           canShowTraceAfterCompleted={!isDrawActive && !activeSong}
           onCompleteInstruction={() => {
+            lastFlipToggleAtRef.current = Date.now();
+            flipStageRef.current = 0;
+            flipStartedAtRef.current = 0;
+            flipNeutralReadyRef.current = true;
             setInstructionOpen(false);
             if (!instructionCompleted) {
               setInstructionCompleted(true);
