@@ -101,7 +101,7 @@ export default function PostGameOverlay({
 				/>
 			</svg>
 
-			<div className="w-full max-w-4xl px-6">
+			<div className="w-full max-w-6xl px-6">
 				<div
 					className="rounded-2xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/46 via-[#ff8a86]/34 to-[#ffb43b]/42 p-6 md:p-8 shadow-2xl"
 					style={{
@@ -139,7 +139,7 @@ export default function PostGameOverlay({
 						</div>
 					</div>
 
-					<div className="mt-6 flex flex-col gap-4">
+					<div className="mt-6 flex flex-col gap-4 w-full max-w-5xl mx-auto">
 						{KEY_ROWS.map((row, idx) => (
 							<div
 								key={idx}
