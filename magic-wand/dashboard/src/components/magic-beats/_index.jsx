@@ -20,7 +20,6 @@ import {
 } from "./constants";
 import { evalBezier, makeApproachGroup, makeBeatGroup } from "./geometry";
 import SongSelectOverlay from "./components/song-select-overlay";
-import StarTraceScreen from "./components/star-trace-screen";
 import PostGameOverlay from "./components/post-game-overlay";
 import HighScoreBoardOverlay from "./components/high-score-board-overlay";
 import InstructionOverlay from "./components/instruction-overlay";
@@ -35,6 +34,7 @@ const BEAT_HUE_EARLY = 0;
 const BEAT_HUE_ON_TIME = 310;
 const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
+const INSTRUCTION_DONE_STORAGE_KEY = "magicbeats-instruction-complete-v1";
 const FLIP_GX_THRESHOLD = 3.2;
 const FLIP_PATTERN_WINDOW_MS = 3200;
 const FLIP_TOGGLE_COOLDOWN_MS = 2200;
@@ -45,7 +45,6 @@ export default function BeatGame({ className }) {
   const { sensorData, mousePos, drawState, powerState } = useIMU();
 
   const [activeSong, setActiveSong] = useState(null);
-  const [traced, setTraced] = useState(true);
   const [menuCursor, setMenuCursor] = useState(null);
   const [canvasRect, setCanvasRect] = useState(null);
   const [score, setScore] = useState(0);
@@ -63,6 +62,7 @@ export default function BeatGame({ className }) {
   const [stopPromptOpen, setStopPromptOpen] = useState(false);
   const [instructionOpen, setInstructionOpen] = useState(false);
   const [instructionRunKey, setInstructionRunKey] = useState(0);
+  const [instructionCompleted, setInstructionCompleted] = useState(false);
   const hitFeedbackTimerRef = useRef(null);
   const perfectSfxRef = useRef(null);
   const greatSfxRef = useRef(null);
@@ -127,8 +127,6 @@ export default function BeatGame({ className }) {
   const trailStateTimerRef = useRef(null);
   const trailFeedbackRef = useRef({ type: "normal", remaining: 0, index: 0 });
   const socketRef = useRef(null);
-  const hasHandledInitialPowerSyncRef = useRef(false);
-  const prevDrawActiveRef = useRef(Boolean(drawState?.draw));
   const prevDrawStopPromptRef = useRef(Boolean(drawState?.draw));
   const lastLoggedSensitivityRef = useRef(null);
   const flipOrientationRef = useRef(null);
@@ -164,6 +162,14 @@ export default function BeatGame({ className }) {
     } catch {}
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const done = window.localStorage.getItem(INSTRUCTION_DONE_STORAGE_KEY) === "1";
+      setInstructionCompleted(done);
+    } catch {}
+  }, []);
+
   const addScoreboardRow = useCallback((row) => {
     setScoreboardRows((prev) => {
       const next = [row, ...prev]
@@ -186,9 +192,6 @@ export default function BeatGame({ className }) {
     });
   }, []);
 
-  const emitPerfectTraceHit = useCallback((x, y) => {
-    socketRef.current?.emit('beat-hit', { perfect: true, x, y, source: 'star-trace' });
-  }, []);
   const cursorBezierRef = useRef(null);
   const cursorClickTimeRef = useRef(-Infinity);
   const cursorSmoothRef = useRef(null); // EMA-filtered sensor position
@@ -230,39 +233,8 @@ export default function BeatGame({ className }) {
     }
     setPendingResult(null);
     setActiveSong(null);
-    setTraced(true);
     setForceSongMenu(true);
   }, []);
-
-  useEffect(() => {
-    if (powerState?.transition === "on") {
-      setTraced(false);
-      return;
-    }
-    if (
-      !hasHandledInitialPowerSyncRef.current &&
-      powerState?.transition === "sync" &&
-      powerState?.power === true
-    ) {
-      hasHandledInitialPowerSyncRef.current = true;
-      setTraced(false);
-      return;
-    }
-    if (powerState?.transition === "off") {
-      setTraced(true);
-    }
-  }, [powerState?.transition, powerState?.timestamp, powerState?.power]);
-
-  useEffect(() => {
-    const wasOn = prevDrawActiveRef.current;
-    const isOn = Boolean(drawState?.draw);
-    if (!wasOn && isOn) {
-      setTraced(false);
-    } else if (wasOn && !isOn) {
-      setTraced(true);
-    }
-    prevDrawActiveRef.current = isOn;
-  }, [drawState?.draw, drawState?.timestamp]);
 
   useEffect(() => {
     const wasOn = prevDrawStopPromptRef.current;
@@ -1206,23 +1178,13 @@ export default function BeatGame({ className }) {
         H: grid · F: fullscreen
       </div>
 
-      {!instructionOpen && !activeSong && mapReady && !traced && !showHighScoreBoard && (
-        <StarTraceScreen
-          cursor={menuCursor}
-          canvasRect={canvasRect}
-          onComplete={() => setTraced(true)}
-          onPerfectTraceHit={emitPerfectTraceHit}
-          sensitivityValue={sensorData?.length ? sensorData[sensorData.length - 1]?.sensor?.sensitivity : null}
-          isDrawActive={isDrawActive}
-        />
-      )}
       {!instructionOpen && !activeSong && mapReady && showHighScoreBoard && (
         <HighScoreBoardOverlay
           rows={scoreboardRows}
           wandOn={isMagicWandOn}
         />
       )}
-      {!instructionOpen && !activeSong && mapReady && traced && !pendingResult && !showHighScoreBoard && (
+      {!instructionOpen && !activeSong && mapReady && !pendingResult && !showHighScoreBoard && (
         <SongSelectOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
@@ -1236,7 +1198,7 @@ export default function BeatGame({ className }) {
           isDrawActive={isDrawActive}
         />
       )}
-      {!instructionOpen && !activeSong && mapReady && traced && pendingResult && (
+      {!instructionOpen && !activeSong && mapReady && pendingResult && (
         <PostGameOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
@@ -1278,11 +1240,20 @@ export default function BeatGame({ className }) {
           drawState={drawState}
           powerState={powerState}
           sensorData={sensorData}
-          onCompleteDrawToggle={() => {
+          instructionCompleted={instructionCompleted}
+          canShowTraceAfterCompleted={!isDrawActive && !activeSong}
+          onCompleteInstruction={() => {
             setInstructionOpen(false);
+            if (!instructionCompleted) {
+              setInstructionCompleted(true);
+              try {
+                if (typeof window !== "undefined") {
+                  window.localStorage.setItem(INSTRUCTION_DONE_STORAGE_KEY, "1");
+                }
+              } catch {}
+            }
             setPendingResult(null);
             setActiveSong(null);
-            setTraced(true);
             setForceSongMenu(true);
             setStopPromptOpen(false);
           }}

@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SFX } from "../../../config";
+import { playSfx } from "../audio";
 import { useWandCursor } from "../hooks/use-wand-cursor";
+import StarTraceScreen from "./star-trace-screen";
 import WandCursorSVG from "./wand-cursor-svg";
 
 const STEPS = {
@@ -8,6 +11,7 @@ const STEPS = {
   CLICK: "click",
   SENSITIVITY: "sensitivity",
   DRAW: "draw",
+  TRACE: "trace",
 };
 
 const IMAGE_BY_STEP = {
@@ -65,7 +69,9 @@ export default function InstructionOverlay({
   drawState,
   powerState,
   sensorData,
-  onCompleteDrawToggle,
+  instructionCompleted = false,
+  canShowTraceAfterCompleted = false,
+  onCompleteInstruction,
 }) {
   const [step, setStep] = useState(STEPS.INTRO);
   const [flash, setFlash] = useState(null);
@@ -80,6 +86,16 @@ export default function InstructionOverlay({
     useWandCursor(cursor, canvasRect);
 
   const latestSensitivity = useMemo(() => getLatestSensitivity(sensorData), [sensorData]);
+
+  const moveToStep = (nextStep, { reward = true } = {}) => {
+    if (reward) {
+      playSfx(SFX.perfect, 0.72);
+    }
+    setStep(nextStep);
+    if (IMAGE_BY_STEP[nextStep]) {
+      setImageSrc(IMAGE_BY_STEP[nextStep]);
+    }
+  };
 
   const spawnFlash = (text) => {
     flashKeyRef.current += 1;
@@ -97,6 +113,7 @@ export default function InstructionOverlay({
     setStep(STEPS.INTRO);
     setImageSrc(IMAGE_BY_STEP[STEPS.INTRO]);
     setFlash(null);
+    playSfx(SFX.instruction, 0.72);
     dataBaselineLenRef.current = Array.isArray(sensorData) ? sensorData.length : 0;
     dataSeenRef.current = false;
     sensitivityBaselineRef.current = null;
@@ -106,8 +123,7 @@ export default function InstructionOverlay({
   useEffect(() => {
     if (step !== STEPS.INTRO) return undefined;
     const timer = setTimeout(() => {
-      setStep(STEPS.POWER);
-      setImageSrc(IMAGE_BY_STEP[STEPS.POWER]);
+      moveToStep(STEPS.POWER);
     }, 3000);
     return () => clearTimeout(timer);
   }, [step]);
@@ -118,16 +134,14 @@ export default function InstructionOverlay({
     if (len > dataBaselineLenRef.current) dataSeenRef.current = true;
     const powerOn = powerState?.power === true;
     if (!dataSeenRef.current && !powerOn) return;
-    setStep(STEPS.CLICK);
-    setImageSrc(IMAGE_BY_STEP[STEPS.CLICK]);
+    moveToStep(STEPS.CLICK);
   }, [step, sensorData, powerState?.power, powerState?.transition, powerState?.timestamp]);
 
   useEffect(() => {
     if (step !== STEPS.CLICK) return undefined;
     const onImuClick = () => {
       spawnFlash("MAGIC CLICK!");
-      setStep(STEPS.SENSITIVITY);
-      setImageSrc(IMAGE_BY_STEP[STEPS.SENSITIVITY]);
+      moveToStep(STEPS.SENSITIVITY);
     };
     window.addEventListener("imu-click", onImuClick);
     return () => window.removeEventListener("imu-click", onImuClick);
@@ -142,16 +156,28 @@ export default function InstructionOverlay({
     }
     if (Math.abs(latestSensitivity - sensitivityBaselineRef.current) < 0.05) return;
     spawnFlash("MAGIC ADJUSTED!");
-    setStep(STEPS.DRAW);
-    setImageSrc(IMAGE_BY_STEP[STEPS.DRAW]);
+    moveToStep(STEPS.DRAW);
   }, [step, latestSensitivity]);
 
   useEffect(() => {
     if (step !== STEPS.DRAW) return;
     const nowDraw = Boolean(drawState?.draw);
     if (nowDraw === drawBaselineRef.current) return;
-    onCompleteDrawToggle?.();
-  }, [step, drawState?.draw, drawState?.timestamp, onCompleteDrawToggle]);
+    const shouldShowTrace = !instructionCompleted || canShowTraceAfterCompleted;
+    if (!shouldShowTrace) {
+      playSfx(SFX.perfect, 0.72);
+      onCompleteInstruction?.();
+      return;
+    }
+    moveToStep(STEPS.TRACE);
+  }, [
+    step,
+    drawState?.draw,
+    drawState?.timestamp,
+    instructionCompleted,
+    canShowTraceAfterCompleted,
+    onCompleteInstruction,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -164,11 +190,31 @@ export default function InstructionOverlay({
       ? "waiting for live wand signal..."
       : step === STEPS.CLICK
         ? "press the wand click button"
-        : step === STEPS.SENSITIVITY
-          ? "change sensitivity to continue"
-          : step === STEPS.DRAW
-            ? "toggle DRAW START/STOP to enter song menu"
-            : "getting started...";
+      : step === STEPS.SENSITIVITY
+        ? "change sensitivity to continue"
+      : step === STEPS.DRAW
+        ? "toggle DRAW START/STOP to continue"
+        : step === STEPS.TRACE
+          ? "trace the star to complete tutorial"
+          : "getting started...";
+
+  if (step === STEPS.TRACE) {
+    return (
+      <div className="absolute inset-0 z-[90]">
+        <StarTraceScreen
+          cursor={cursor}
+          canvasRect={canvasRect}
+          isDrawActive={isDrawActive}
+          sensitivityValue={latestSensitivity}
+          onPerfectTraceHit={() => {}}
+          onComplete={() => {
+            playSfx(SFX.perfect, 0.72);
+            onCompleteInstruction?.();
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
