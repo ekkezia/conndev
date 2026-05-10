@@ -122,6 +122,7 @@ export default function BeatGame({ className }) {
   const hasHandledInitialPowerSyncRef = useRef(false);
   const prevDrawActiveRef = useRef(Boolean(drawState?.draw));
   const prevDrawStopPromptRef = useRef(Boolean(drawState?.draw));
+  const lastLoggedSensitivityRef = useRef(null);
 
   const isMagicWandOn = Boolean(drawState?.draw);
   const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
@@ -953,6 +954,15 @@ export default function BeatGame({ className }) {
     paper.view.draw();
   }, [activeSong]);
 
+  useEffect(() => {
+    const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
+    const next = Number(latest?.sensor?.sensitivity);
+    if (!Number.isFinite(next)) return;
+    if (lastLoggedSensitivityRef.current === next) return;
+    lastLoggedSensitivityRef.current = next;
+    console.log("🎛️ sensitivity:", next, "timestamp:", latest?.timestamp ?? Date.now());
+  }, [sensorData]);
+
   return (
     <div className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}>
       <div
@@ -1064,6 +1074,7 @@ export default function BeatGame({ className }) {
           canvasRect={canvasRect}
           onComplete={() => setTraced(true)}
           onPerfectTraceHit={emitPerfectTraceHit}
+          sensitivityValue={sensorData?.length ? sensorData[sensorData.length - 1]?.sensor?.sensitivity : null}
           isDrawActive={isDrawActive}
         />
       )}

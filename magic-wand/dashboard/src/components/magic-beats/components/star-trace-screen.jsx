@@ -54,7 +54,14 @@ function rainbowDotColor(index, total, alpha = 0.92) {
   return `hsla(${hue}, 90%, 62%, ${alpha})`;
 }
 
-export default function StarTraceScreen({ cursor, canvasRect, onComplete, onPerfectTraceHit, isDrawActive = true }) {
+export default function StarTraceScreen({
+  cursor,
+  canvasRect,
+  onComplete,
+  onPerfectTraceHit,
+  sensitivityValue = null,
+  isDrawActive = true,
+}) {
   const [hitCount, setHitCount] = useState(0);
   const hitRef = useRef(0);
   const doneRef = useRef(false);
@@ -162,6 +169,9 @@ export default function StarTraceScreen({ cursor, canvasRect, onComplete, onPerf
               <stop offset="100%" stopColor="#b02dff" />
             </linearGradient>
           </defs>
+          <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.92)" letterSpacing="1.2">
+            SENSITIVITY
+          </text>
           <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
           <circle
             cx="60"
@@ -175,10 +185,7 @@ export default function StarTraceScreen({ cursor, canvasRect, onComplete, onPerf
             transform="rotate(-90 60 60)"
           />
           <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
-            10
-          </text>
-          <text x="79" y="68" textAnchor="start" fontSize="18" fontWeight="600" fill="rgba(255,255,255,0.96)">
-            s
+            {Number.isFinite(Number(sensitivityValue)) ? Number(sensitivityValue).toFixed(1) : "--"}
           </text>
         </svg>
       </div>

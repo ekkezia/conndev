@@ -9,7 +9,7 @@
 
 // ================= UDP =================
 WiFiUDP udp;
-IPAddress serverIp(10, 23, 10, 18);   // updated computer/server IP
+IPAddress serverIp(10, 23, 10, 50);   // updated computer/server IP
 const unsigned int serverUdpPort = 4210;
 const unsigned int localUdpPort  = 4211; // listens for feedback
 char incomingPacket[160];
