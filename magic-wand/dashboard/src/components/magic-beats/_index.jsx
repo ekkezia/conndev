@@ -36,9 +36,9 @@ const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
 const INSTRUCTION_DONE_STORAGE_KEY = "magicbeats-instruction-complete-v1";
 const FLIP_GX_HIGH_THRESHOLD = 3.8;
-const FLIP_GX_NEUTRAL_THRESHOLD = 1.2;
 const FLIP_PATTERN_WINDOW_MS = 3200;
 const FLIP_TOGGLE_COOLDOWN_MS = 2200;
+const FLIP_STAGE_MIN_GAP_MS = 120;
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function BeatGame({ className }) {
@@ -133,7 +133,8 @@ export default function BeatGame({ className }) {
   const lastFlipToggleAtRef = useRef(0);
   const flipStageRef = useRef(0); // 0 wait-front, 1 wait-back, 2 wait-front
   const flipStartedAtRef = useRef(0);
-  const flipNeutralReadyRef = useRef(true);
+  const flipLastStageAtRef = useRef(0);
+  const flipLastOrientationRef = useRef(null);
 
   const isMagicWandOn = Boolean(drawState?.draw);
   const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
@@ -239,7 +240,7 @@ export default function BeatGame({ className }) {
     }
     setPendingResult(null);
     setActiveSong(null);
-    setForceSongMenu(true);
+    setForceSongMenu(false);
   }, []);
 
   useEffect(() => {
@@ -342,7 +343,8 @@ export default function BeatGame({ className }) {
     console.log("🪄 instruction-view:", instructionOpen ? "OPEN" : "CLOSED");
     flipStageRef.current = 0;
     flipStartedAtRef.current = 0;
-    flipNeutralReadyRef.current = true;
+    flipLastStageAtRef.current = 0;
+    flipLastOrientationRef.current = null;
   }, [instructionOpen]);
 
   useEffect(() => {
@@ -365,21 +367,18 @@ export default function BeatGame({ className }) {
       return;
     }
 
-    if (Math.abs(gx) <= FLIP_GX_NEUTRAL_THRESHOLD) {
-      flipNeutralReadyRef.current = true;
-      return;
-    }
-
     const orientation =
       gx >= FLIP_GX_HIGH_THRESHOLD ? "front" : gx <= -FLIP_GX_HIGH_THRESHOLD ? "back" : null;
     if (!orientation) return;
+    if (flipLastOrientationRef.current === orientation) return;
+    flipLastOrientationRef.current = orientation;
 
     const stage = flipStageRef.current;
     if (stage === 0) {
-      if (orientation === "front" && flipNeutralReadyRef.current) {
+      if (orientation === "front") {
         flipStageRef.current = 1;
         flipStartedAtRef.current = now;
-        flipNeutralReadyRef.current = false;
+        flipLastStageAtRef.current = now;
         console.log("🪄 flip stage 1/3: FRONT", { gx: gx.toFixed(2) });
       }
       return;
@@ -389,25 +388,27 @@ export default function BeatGame({ className }) {
       console.log("🪄 flip sequence timeout, resetting");
       flipStageRef.current = 0;
       flipStartedAtRef.current = 0;
-      flipNeutralReadyRef.current = true;
+      flipLastStageAtRef.current = 0;
+      flipLastOrientationRef.current = null;
       return;
     }
 
     if (stage === 1) {
-      if (orientation === "back" && flipNeutralReadyRef.current) {
+      if (orientation === "back" && now - flipLastStageAtRef.current >= FLIP_STAGE_MIN_GAP_MS) {
         flipStageRef.current = 2;
-        flipNeutralReadyRef.current = false;
+        flipLastStageAtRef.current = now;
         console.log("🪄 flip stage 2/3: BACK", { gx: gx.toFixed(2) });
       }
       return;
     }
 
     if (stage === 2) {
-      if (orientation === "front" && flipNeutralReadyRef.current) {
+      if (orientation === "front" && now - flipLastStageAtRef.current >= FLIP_STAGE_MIN_GAP_MS) {
         console.log("🪄 flip stage 3/3: FRONT -> TOGGLE instruction");
         flipStageRef.current = 0;
         flipStartedAtRef.current = 0;
-        flipNeutralReadyRef.current = false;
+        flipLastStageAtRef.current = 0;
+        flipLastOrientationRef.current = null;
         lastFlipToggleAtRef.current = now;
         enterInstructionOverlay();
       }
@@ -1286,7 +1287,8 @@ export default function BeatGame({ className }) {
             lastFlipToggleAtRef.current = Date.now();
             flipStageRef.current = 0;
             flipStartedAtRef.current = 0;
-            flipNeutralReadyRef.current = true;
+            flipLastStageAtRef.current = 0;
+            flipLastOrientationRef.current = null;
             setInstructionOpen(false);
             if (!instructionCompleted) {
               setInstructionCompleted(true);
@@ -1298,7 +1300,7 @@ export default function BeatGame({ className }) {
             }
             setPendingResult(null);
             setActiveSong(null);
-            setForceSongMenu(true);
+            setForceSongMenu(false);
             setStopPromptOpen(false);
           }}
         />
