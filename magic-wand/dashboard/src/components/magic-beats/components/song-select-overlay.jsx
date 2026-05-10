@@ -3,7 +3,13 @@ import SONGS from "../../../config/game.json";
 import { useWandCursor } from "../hooks/use-wand-cursor";
 import WandCursorSVG from "./wand-cursor-svg";
 
-export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawActive = true }) {
+export default function SongSelectOverlay({
+  cursor,
+  canvasRect,
+  onStart,
+  onPreviewStateChange,
+  isDrawActive = true,
+}) {
   const [selected, setSelected] = useState(null);
   const previewAudioRef = useRef(null);
   const previewSrcRef = useRef(null);
@@ -20,7 +26,8 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
       previewAudioRef.current = null;
     }
     previewSrcRef.current = null;
-  }, []);
+    onPreviewStateChange?.(false);
+  }, [onPreviewStateChange]);
 
   const playPreview = useCallback((song) => {
     if (!song?.src) return;
@@ -36,7 +43,8 @@ export default function SongSelectOverlay({ cursor, canvasRect, onStart, isDrawA
     preview.play().catch(() => {});
     previewAudioRef.current = preview;
     previewSrcRef.current = song.src;
-  }, [stopPreview]);
+    onPreviewStateChange?.(true);
+  }, [onPreviewStateChange, stopPreview]);
 
   useEffect(() => {
     songBySrcRef.current = new Map(SONGS.map((song) => [song.src, song]));

@@ -45,6 +45,7 @@ export default function BeatGame({ className }) {
   const [score, setScore] = useState(0);
   const [pendingResult, setPendingResult] = useState(null);
   const [gridVisible, setGridVisible] = useState(false);
+  const [isPreviewingSong, setIsPreviewingSong] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(
     typeof document !== "undefined" ? Boolean(document.fullscreenElement) : false,
   );
@@ -281,7 +282,7 @@ export default function BeatGame({ className }) {
   }, [activeSong]);
 
   useEffect(() => {
-    if (activeSong) {
+    if (activeSong || isPreviewingSong) {
       if (idleAudioRef.current) {
         idleAudioRef.current.pause();
       }
@@ -296,7 +297,7 @@ export default function BeatGame({ className }) {
       idleAudioRef.current = idle;
     }
     idleAudioRef.current.play().catch(() => {});
-  }, [activeSong, mapReady]);
+  }, [activeSong, isPreviewingSong, mapReady]);
 
   useEffect(() => {
     return () => {
@@ -969,6 +970,25 @@ export default function BeatGame({ className }) {
       </div>
       <canvas ref={canvasRef} resize="true" className="absolute bg-transparent z-10" />
 
+      {sensorData && sensorData.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
+        <div className="absolute top-3 left-3 z-30 pointer-events-none rounded-lg border border-cyan-300/45 bg-black/55 px-2.5 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="text-cyan-200 font-mono text-[9px] uppercase tracking-wider">sens</span>
+            <div className="w-16 h-1.5 rounded bg-cyan-950/70 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-cyan-300"
+                style={{
+                  width: `${Math.max(0, Math.min(100, (Number(sensorData[sensorData.length - 1]?.sensor?.sensitivity) / 10) * 100))}%`,
+                }}
+              />
+            </div>
+            <span className="text-cyan-100 font-mono text-[10px] tabular-nums">
+              {Number(sensorData[sensorData.length - 1]?.sensor?.sensitivity).toFixed(1)}
+            </span>
+          </div>
+        </div>
+      )}
+
       {activeSong && gridVisible && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-cola-brown/60 text-cream-soda font-mono text-xs px-4 py-1.5 rounded-full flex items-center gap-4">
           <span className="pointer-events-none">{activeSong.title} — {activeSong.artist}</span>
@@ -1057,9 +1077,11 @@ export default function BeatGame({ className }) {
         <SongSelectOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
+          onPreviewStateChange={setIsPreviewingSong}
           onStart={(song) => {
             setPendingResult(null);
             setForceSongMenu(false);
+            setIsPreviewingSong(false);
             setActiveSong(song);
           }}
           isDrawActive={isDrawActive}

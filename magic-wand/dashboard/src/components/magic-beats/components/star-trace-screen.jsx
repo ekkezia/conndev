@@ -6,6 +6,7 @@ import WandCursorSVG from "./wand-cursor-svg";
 
 const STAR_TRACE_HIT_RADIUS = 70;
 const TRACE_POINTS_PER_SEGMENT = 24;
+const TRACE_RING_SIZE = 112;
 
 function createTraceControlPoints(rect) {
   const cx = rect.x + rect.width / 2;
@@ -153,6 +154,34 @@ export default function StarTraceScreen({ cursor, canvasRect, onComplete, onPerf
           </p>
         </div>
       )}
+      <div className="absolute top-4 right-4 pointer-events-none z-10">
+        <svg width={TRACE_RING_SIZE} height={TRACE_RING_SIZE} viewBox="0 0 120 120">
+          <defs>
+            <linearGradient id="traceRingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#ff2457" />
+              <stop offset="100%" stopColor="#b02dff" />
+            </linearGradient>
+          </defs>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
+          <circle
+            cx="60"
+            cy="60"
+            r="46"
+            fill="none"
+            stroke="url(#traceRingGradient)"
+            strokeWidth="12"
+            strokeLinecap="round"
+            strokeDasharray="248 70"
+            transform="rotate(-90 60 60)"
+          />
+          <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
+            10
+          </text>
+          <text x="79" y="68" textAnchor="start" fontSize="18" fontWeight="600" fill="rgba(255,255,255,0.96)">
+            s
+          </text>
+        </svg>
+      </div>
     </div>
   );
 }

@@ -14,7 +14,7 @@ function App() {
     );
   }
 
-  if (path === '/magic) canvas') {
+  if (path === '/magiccanvas' || path === '/magic-canvas') {
     return (
       <MagicCanvas />
     );
