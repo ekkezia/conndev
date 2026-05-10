@@ -1,9 +1,9 @@
 [
   {
-    "title": "PRISHA",
-    "artist": "Prisha Jain",
-    "src": "/music/prisha.wav",
-    "bpm": 95,
+    "title": "I don't Wanna Be Friends",
+    "artist": "RaFia",
+    "src": "/music/idontwannabefriends.mp3",
+    "bpm": 120,
     "location": {
       "lat": 40.6936,
       "lng": -73.9868
@@ -20,6 +20,26 @@
     }
   },
   {
+    "title": "Note to Self",
+    "artist": "RaFia",
+    "src": "/music/notetoself.mp3",
+    "bpm": 143,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+    {
+    "title": "Slowly Moving",
+    "artist": "Yonzzy",
+    "src": "/music/slowlymoving.mp3",
+    "bpm": 111,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
     "title": "Nieve Negra",
     "artist": "Ivan Abogado",
     "src": "/music/nievenegra.wav",
@@ -30,10 +50,30 @@
     }
   },
   {
-    "title": "ANIE",
-    "artist": "Ivan Abogado",
-    "src": "/music/ecosfera.wav",
+    "title": "没有波澜",
+    "artist": "Qihan Christoff Jiang",
+    "src": "/music/没有波澜.mp3",
+    "bpm": 100,
+    "location": {
+      "lat": 19.4328,
+      "lng": -99.1334
+    }
+  },
+  {
+    "title": "Don't Want Me",
+    "artist": "RaFia",
+    "src": "/music/dontwantme.mp3",
     "bpm": 120,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
+    "title": "Dear Yamaguchi",
+    "artist": "Qihan Christoff Jiang",
+    "src": "/music/dearyamaguchi.mp3",
+    "bpm": 100,
     "location": {
       "lat": 19.4328,
       "lng": -99.1334
