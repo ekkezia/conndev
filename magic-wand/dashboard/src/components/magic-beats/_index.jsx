@@ -36,10 +36,10 @@ const BEAT_HUE_ON_TIME = 310;
 const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
 const INSTRUCTION_DONE_STORAGE_KEY = "magicbeats-instruction-complete-v1";
-const FLIP_GX_HIGH_THRESHOLD = 3.8;
+const FLIP_GX_HIGH_THRESHOLD = 7.5;
 const FLIP_PATTERN_WINDOW_MS = 3200;
 const FLIP_TOGGLE_COOLDOWN_MS = 2200;
-const FLIP_STAGE_MIN_GAP_MS = 120;
+const FLIP_STAGE_MIN_GAP_MS = 180;
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function BeatGame({ className }) {
@@ -1282,8 +1282,6 @@ export default function BeatGame({ className }) {
           drawState={drawState}
           powerState={powerState}
           sensorData={sensorData}
-          instructionCompleted={instructionCompleted}
-          canShowTraceAfterCompleted={!isDrawActive && !activeSong}
           onCompleteInstruction={() => {
             lastFlipToggleAtRef.current = Date.now();
             flipStageRef.current = 0;

@@ -80,8 +80,6 @@ export default function InstructionOverlay({
   drawState,
   powerState,
   sensorData,
-  instructionCompleted = false,
-  canShowTraceAfterCompleted = false,
   onCompleteInstruction,
 }) {
   const [step, setStep] = useState(STEPS.INTRO);
@@ -174,20 +172,11 @@ export default function InstructionOverlay({
     if (step !== STEPS.DRAW) return;
     const nowDraw = Boolean(drawState?.draw);
     if (nowDraw === drawBaselineRef.current) return;
-    const shouldShowTrace = !instructionCompleted || canShowTraceAfterCompleted;
-    if (!shouldShowTrace) {
-      playSfx(SFX.perfect, 0.72);
-      onCompleteInstruction?.();
-      return;
-    }
     moveToStep(STEPS.TRACE);
   }, [
     step,
     drawState?.draw,
     drawState?.timestamp,
-    instructionCompleted,
-    canShowTraceAfterCompleted,
-    onCompleteInstruction,
   ]);
 
   useEffect(() => {
