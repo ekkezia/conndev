@@ -23,6 +23,7 @@ import SongSelectOverlay from "./components/song-select-overlay";
 import StarTraceScreen from "./components/star-trace-screen";
 import PostGameOverlay from "./components/post-game-overlay";
 import HighScoreBoardOverlay from "./components/high-score-board-overlay";
+import InstructionOverlay from "./components/instruction-overlay";
 
 const PERFECT_HIT_WORDS = ["PERFECT", "MAGIC", "WOW", "SASSY", "AMAZING"];
 const GOOD_HIT_WORDS = ["GREAT", "NICE", "OK", "GOOD"];
@@ -30,8 +31,13 @@ const pickRandomWord = (words) => words[Math.floor(Math.random() * words.length)
 const FEEDBACK_TRAIL_STARS = 5;
 const HIT_TRAIL_GRADIENT = ["#fff18a", "#dfff68", "#b8ff52", "#86f94a", "#49e35a"];
 const MISS_TRAIL_GRADIENT = ["#ffc1dd", "#ff9bc7", "#ff79b6", "#ff5aa7", "#ff3e9a"];
+const BEAT_HUE_EARLY = 0;
+const BEAT_HUE_ON_TIME = 310;
 const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
+const FLIP_GX_THRESHOLD = 3.2;
+const FLIP_PATTERN_WINDOW_MS = 3200;
+const FLIP_TOGGLE_COOLDOWN_MS = 1200;
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function BeatGame({ className }) {
@@ -55,6 +61,8 @@ export default function BeatGame({ className }) {
   const [scoreboardRows, setScoreboardRows] = useState([]);
   const [forceSongMenu, setForceSongMenu] = useState(false);
   const [stopPromptOpen, setStopPromptOpen] = useState(false);
+  const [instructionOpen, setInstructionOpen] = useState(false);
+  const [instructionRunKey, setInstructionRunKey] = useState(0);
   const hitFeedbackTimerRef = useRef(null);
   const perfectSfxRef = useRef(null);
   const greatSfxRef = useRef(null);
@@ -123,6 +131,9 @@ export default function BeatGame({ className }) {
   const prevDrawActiveRef = useRef(Boolean(drawState?.draw));
   const prevDrawStopPromptRef = useRef(Boolean(drawState?.draw));
   const lastLoggedSensitivityRef = useRef(null);
+  const flipOrientationRef = useRef(null);
+  const flipEventRef = useRef([]);
+  const lastFlipToggleAtRef = useRef(0);
 
   const isMagicWandOn = Boolean(drawState?.draw);
   const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
@@ -281,6 +292,80 @@ export default function BeatGame({ className }) {
       if (window.magicBeatGame) delete window.magicBeatGame;
     };
   }, [activeSong]);
+
+  const toggleInstructionOverlay = useCallback(() => {
+    setInstructionOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setInstructionRunKey((k) => k + 1);
+      } else {
+        setForceSongMenu(false);
+      }
+      return next;
+    });
+  }, []);
+
+  const enterInstructionOverlay = useCallback(() => {
+    setInstructionRunKey((k) => k + 1);
+    setInstructionOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.magicInstruction = {
+      open: () => {
+        enterInstructionOverlay();
+        return true;
+      },
+      close: () => {
+        setInstructionOpen(false);
+        setForceSongMenu(false);
+        return true;
+      },
+      toggle: () => {
+        toggleInstructionOverlay();
+        return true;
+      },
+      state: () => ({
+        open: instructionOpen,
+        runKey: instructionRunKey,
+      }),
+    };
+    return () => {
+      if (window.magicInstruction) delete window.magicInstruction;
+    };
+  }, [enterInstructionOverlay, instructionOpen, instructionRunKey, toggleInstructionOverlay]);
+
+  useEffect(() => {
+    const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
+    if (!latest?.sensor) return;
+    const gx = Number(latest.sensor.gx);
+    if (!Number.isFinite(gx)) return;
+
+    const orientation =
+      gx >= FLIP_GX_THRESHOLD ? "front" : gx <= -FLIP_GX_THRESHOLD ? "back" : null;
+    if (!orientation) return;
+    if (flipOrientationRef.current === orientation) return;
+    flipOrientationRef.current = orientation;
+
+    const now = Date.now();
+    const nextEvents = [...flipEventRef.current, { orientation, at: now }]
+      .filter((evt) => now - evt.at <= FLIP_PATTERN_WINDOW_MS);
+    flipEventRef.current = nextEvents;
+    if (nextEvents.length < 3) return;
+
+    const tail = nextEvents.slice(-3);
+    const patternOk =
+      tail[0].orientation === "front" &&
+      tail[1].orientation === "back" &&
+      tail[2].orientation === "front" &&
+      tail[2].at - tail[0].at <= FLIP_PATTERN_WINDOW_MS;
+    const cooldownOk = now - lastFlipToggleAtRef.current > FLIP_TOGGLE_COOLDOWN_MS;
+    if (!patternOk || !cooldownOk) return;
+
+    lastFlipToggleAtRef.current = now;
+    toggleInstructionOverlay();
+  }, [sensorData, toggleInstructionOverlay]);
 
   useEffect(() => {
     if (activeSong || isPreviewingSong) {
@@ -729,13 +814,12 @@ export default function BeatGame({ className }) {
 
         const approachGroup = makeApproachGroup(bx, by, shapeType);
         const beatGroup = makeBeatGroup(bx, by, shapeType);
-        const baseHue = Math.random() * 360;
         const colorLayerCount = Math.max(0, beatGroup.children.length - 4);
         for (let i = 0; i < colorLayerCount; i++) {
           beatGroup.children[i].fillColor = new paper.Color({
-            hue: (baseHue + i * 18) % 360,
-            saturation: Math.max(0.55, 0.88 - i * 0.1),
-            brightness: Math.max(0.35, 0.98 - i * 0.18),
+            hue: BEAT_HUE_EARLY,
+            saturation: Math.max(0.58, 0.9 - i * 0.08),
+            brightness: Math.max(0.4, 0.98 - i * 0.16),
           });
         }
 
@@ -767,6 +851,19 @@ export default function BeatGame({ className }) {
         if (!beat.beatGroup || !beat.approachGroup) return false;
 
         const timeToOnset = beat.onsetTime - now;
+        const colorProgress = Math.max(
+          0,
+          Math.min(1, (SHOW_BEFORE - Math.max(timeToOnset, 0)) / SHOW_BEFORE),
+        );
+        const hueNow = BEAT_HUE_EARLY + (BEAT_HUE_ON_TIME - BEAT_HUE_EARLY) * colorProgress;
+        const colorLayerCount = Math.max(0, beat.beatGroup.children.length - 4);
+        for (let i = 0; i < colorLayerCount; i++) {
+          beat.beatGroup.children[i].fillColor = new paper.Color({
+            hue: (hueNow + i * 6) % 360,
+            saturation: Math.max(0.58, 0.9 - i * 0.08),
+            brightness: Math.max(0.4, 0.98 - i * 0.16),
+          });
+        }
 
         // Gyro hit
         const dx = cursorX - beat.x;
@@ -1127,6 +1224,25 @@ export default function BeatGame({ className }) {
               playedAt: nowIso,
             });
             setPendingResult(null);
+          }}
+        />
+      )}
+
+      {instructionOpen && mapReady && (
+        <InstructionOverlay
+          runKey={instructionRunKey}
+          cursor={menuCursor}
+          canvasRect={canvasRect}
+          isDrawActive={isDrawActive}
+          drawState={drawState}
+          sensorData={sensorData}
+          onCompleteDrawToggle={() => {
+            setInstructionOpen(false);
+            setPendingResult(null);
+            setActiveSong(null);
+            setTraced(true);
+            setForceSongMenu(true);
+            setStopPromptOpen(false);
           }}
         />
       )}
