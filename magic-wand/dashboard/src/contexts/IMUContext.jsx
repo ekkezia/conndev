@@ -42,9 +42,9 @@ export function IMUProvider({ children }) {
     bri: 0
   }); // phillips head animation state
 
-  useEffect(() => {
-    console.log('sessions updated, total sessions:', sessions.length, sensorData);
-  }, [sensorData])
+  // useEffect(() => {
+  //   console.log('sessions updated, total sessions:', sessions.length, sensorData);
+  // }, [sensorData])
   const toClientPoint = useCallback((screenPos) => {
     if (!screenPos) return null;
     const viewW = Math.max(window.innerWidth || 1, 1);
