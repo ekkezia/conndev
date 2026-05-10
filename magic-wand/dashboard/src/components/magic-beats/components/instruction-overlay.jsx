@@ -88,6 +88,7 @@ export default function InstructionOverlay({
   const flashTimerRef = useRef(null);
   const flashKeyRef = useRef(0);
   const dataBaselineLenRef = useRef(0);
+  const openedAtMsRef = useRef(0);
   const dataSeenRef = useRef(false);
   const sensitivityBaselineRef = useRef(null);
   const drawBaselineRef = useRef(Boolean(drawState?.draw));
@@ -123,6 +124,7 @@ export default function InstructionOverlay({
     setImageSrc(IMAGE_BY_STEP[STEPS.INTRO]);
     setFlash(null);
     playSfx(SFX.instruction, 0.72);
+    openedAtMsRef.current = Date.now();
     dataBaselineLenRef.current = Array.isArray(sensorData) ? sensorData.length : 0;
     dataSeenRef.current = false;
     sensitivityBaselineRef.current = null;
@@ -139,8 +141,17 @@ export default function InstructionOverlay({
 
   useEffect(() => {
     if (step !== STEPS.POWER) return;
+    const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
+    const latestTs = Number(latest?.timestamp);
     const len = Array.isArray(sensorData) ? sensorData.length : 0;
-    if (len > dataBaselineLenRef.current) dataSeenRef.current = true;
+    const hasLenGrowth = len > dataBaselineLenRef.current;
+    const hasPacketSinceOpened =
+      Number.isFinite(latestTs) && latestTs > openedAtMsRef.current;
+    const hasVeryRecentPacket =
+      Number.isFinite(latestTs) && Date.now() - latestTs < 1800;
+    if (hasLenGrowth || hasPacketSinceOpened || hasVeryRecentPacket) {
+      dataSeenRef.current = true;
+    }
     const powerOn = powerState?.power === true;
     if (!dataSeenRef.current && !powerOn) return;
     moveToStep(STEPS.CLICK);

@@ -1,5 +1,15 @@
 [
   {
+    "title": "My First Partner",
+    "artist": "Prisha Jain",
+    "src": "/music/myfirstpartner.wav",
+    "bpm": 212,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
     "title": "I don't Wanna Be Friends",
     "artist": "RaFia",
     "src": "/music/idontwannabefriends.mp3",

@@ -36,10 +36,14 @@ const BEAT_HUE_ON_TIME = 310;
 const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
 const INSTRUCTION_DONE_STORAGE_KEY = "magicbeats-instruction-complete-v1";
-const FLIP_GX_HIGH_THRESHOLD = 7.5;
+const FLIP_GX_HIGH_THRESHOLD = 11.5;
 const FLIP_PATTERN_WINDOW_MS = 3200;
 const FLIP_TOGGLE_COOLDOWN_MS = 2200;
 const FLIP_STAGE_MIN_GAP_MS = 180;
+const FLIP_DOT_UPRIGHT_THRESHOLD = 0.72;
+const FLIP_DOT_UPSIDEDOWN_THRESHOLD = -0.72;
+const FLIP_BASELINE_BLEND = 0.05;
+const FLIP_BASELINE_MIN_SAMPLES = 14;
 const GAME_HUD_RING_SIZE = 104;
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
@@ -138,6 +142,8 @@ export default function BeatGame({ className }) {
   const flipStartedAtRef = useRef(0);
   const flipLastStageAtRef = useRef(0);
   const flipLastOrientationRef = useRef(null);
+  const flipBaselineRef = useRef(null); // normalized gravity direction for "not flipped"
+  const flipBaselineSamplesRef = useRef(0);
 
   const isMagicWandOn = Boolean(drawState?.draw);
   const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
@@ -348,13 +354,16 @@ export default function BeatGame({ className }) {
     flipStartedAtRef.current = 0;
     flipLastStageAtRef.current = 0;
     flipLastOrientationRef.current = null;
+    flipBaselineSamplesRef.current = 0;
   }, [instructionOpen]);
 
   useEffect(() => {
     const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
     if (!latest?.sensor) return;
+    const ax = Number(latest.sensor.ax);
+    const ay = Number(latest.sensor.ay);
+    const az = Number(latest.sensor.az);
     const gx = Number(latest.sensor.gx);
-    if (!Number.isFinite(gx)) return;
     const now = Date.now();
 
     if (instructionOpen) {
@@ -370,8 +379,56 @@ export default function BeatGame({ className }) {
       return;
     }
 
-    const orientation =
-      gx >= FLIP_GX_HIGH_THRESHOLD ? "front" : gx <= -FLIP_GX_HIGH_THRESHOLD ? "back" : null;
+    let orientation = null;
+    let usingGravity = false;
+    const hasAccel = Number.isFinite(ax) && Number.isFinite(ay) && Number.isFinite(az);
+    if (hasAccel) {
+      const mag = Math.hypot(ax, ay, az);
+      if (mag > 0.0001) {
+        const n = { x: ax / mag, y: ay / mag, z: az / mag };
+        const prevBase = flipBaselineRef.current;
+
+        if (!prevBase) {
+          flipBaselineRef.current = n;
+          flipBaselineSamplesRef.current = 1;
+          return;
+        }
+
+        if (flipStageRef.current === 0) {
+          // Keep calibrating "not flipped" gravity direction while idle.
+          const bx = prevBase.x + (n.x - prevBase.x) * FLIP_BASELINE_BLEND;
+          const by = prevBase.y + (n.y - prevBase.y) * FLIP_BASELINE_BLEND;
+          const bz = prevBase.z + (n.z - prevBase.z) * FLIP_BASELINE_BLEND;
+          const bmag = Math.hypot(bx, by, bz);
+          if (bmag > 0.0001) {
+            flipBaselineRef.current = { x: bx / bmag, y: by / bmag, z: bz / bmag };
+          }
+          if (flipBaselineSamplesRef.current < FLIP_BASELINE_MIN_SAMPLES) {
+            flipBaselineSamplesRef.current += 1;
+          }
+        }
+
+        if (flipBaselineSamplesRef.current >= FLIP_BASELINE_MIN_SAMPLES) {
+          const base = flipBaselineRef.current;
+          const dot = base.x * n.x + base.y * n.y + base.z * n.z;
+          usingGravity = true;
+          orientation =
+            dot >= FLIP_DOT_UPRIGHT_THRESHOLD
+              ? "front"
+              : dot <= FLIP_DOT_UPSIDEDOWN_THRESHOLD
+                ? "back"
+                : null;
+        }
+      }
+    }
+
+    // Fallback for streams that don't include accel.
+    if (!usingGravity) {
+      if (!Number.isFinite(gx)) return;
+      orientation =
+        gx >= FLIP_GX_HIGH_THRESHOLD ? "front" : gx <= -FLIP_GX_HIGH_THRESHOLD ? "back" : null;
+    }
+
     if (!orientation) return;
     if (flipLastOrientationRef.current === orientation) return;
     flipLastOrientationRef.current = orientation;
@@ -382,7 +439,7 @@ export default function BeatGame({ className }) {
         flipStageRef.current = 1;
         flipStartedAtRef.current = now;
         flipLastStageAtRef.current = now;
-        console.log("🪄 flip stage 1/3: FRONT", { gx: gx.toFixed(2) });
+        console.log(`🪄 flip stage 1/3: FRONT (${usingGravity ? "gravity" : "gyro"})`);
       }
       return;
     }
@@ -400,7 +457,7 @@ export default function BeatGame({ className }) {
       if (orientation === "back" && now - flipLastStageAtRef.current >= FLIP_STAGE_MIN_GAP_MS) {
         flipStageRef.current = 2;
         flipLastStageAtRef.current = now;
-        console.log("🪄 flip stage 2/3: BACK", { gx: gx.toFixed(2) });
+        console.log(`🪄 flip stage 2/3: BACK (${usingGravity ? "gravity" : "gyro"})`);
       }
       return;
     }

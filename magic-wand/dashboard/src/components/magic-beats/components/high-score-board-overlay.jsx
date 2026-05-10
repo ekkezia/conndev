@@ -48,11 +48,6 @@ export default function HighScoreBoardOverlay({ rows = [], wandOn = false }) {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-start gap-3">
-              <img
-                src="/images/wand-instruction.png"
-                alt="Wand instruction"
-                className="w-16 h-16 rounded-lg object-cover border border-cream-soda/40 shadow-md"
-              />
               <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">MagicWand™ Prodigies</h2>
             </div>
             <p className="text-cream-soda/70 font-mono text-sm uppercase tracking-wider">
