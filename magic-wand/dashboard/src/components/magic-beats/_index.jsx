@@ -37,7 +37,7 @@ const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
 const FLIP_GX_THRESHOLD = 3.2;
 const FLIP_PATTERN_WINDOW_MS = 3200;
-const FLIP_TOGGLE_COOLDOWN_MS = 1200;
+const FLIP_TOGGLE_COOLDOWN_MS = 2200;
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function BeatGame({ className }) {
@@ -134,6 +134,8 @@ export default function BeatGame({ className }) {
   const flipOrientationRef = useRef(null);
   const flipEventRef = useRef([]);
   const lastFlipToggleAtRef = useRef(0);
+  const flipStageRef = useRef(0); // 0 wait-front, 1 wait-back, 2 wait-front
+  const flipStartedAtRef = useRef(0);
 
   const isMagicWandOn = Boolean(drawState?.draw);
   const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
@@ -337,6 +339,10 @@ export default function BeatGame({ className }) {
   }, [enterInstructionOverlay, instructionOpen, instructionRunKey, toggleInstructionOverlay]);
 
   useEffect(() => {
+    console.log("🪄 instruction-view:", instructionOpen ? "OPEN" : "CLOSED");
+  }, [instructionOpen]);
+
+  useEffect(() => {
     const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
     if (!latest?.sensor) return;
     const gx = Number(latest.sensor.gx);
@@ -349,22 +355,55 @@ export default function BeatGame({ className }) {
     flipOrientationRef.current = orientation;
 
     const now = Date.now();
-    const nextEvents = [...flipEventRef.current, { orientation, at: now }]
+    const nextEvents = [...flipEventRef.current, { orientation, at: now, gx }]
       .filter((evt) => now - evt.at <= FLIP_PATTERN_WINDOW_MS);
     flipEventRef.current = nextEvents;
-    if (nextEvents.length < 3) return;
 
-    const tail = nextEvents.slice(-3);
-    const patternOk =
-      tail[0].orientation === "front" &&
-      tail[1].orientation === "back" &&
-      tail[2].orientation === "front" &&
-      tail[2].at - tail[0].at <= FLIP_PATTERN_WINDOW_MS;
     const cooldownOk = now - lastFlipToggleAtRef.current > FLIP_TOGGLE_COOLDOWN_MS;
-    if (!patternOk || !cooldownOk) return;
+    if (!cooldownOk) {
+      console.log("🪄 flip cooldown active");
+      return;
+    }
 
-    lastFlipToggleAtRef.current = now;
-    toggleInstructionOverlay();
+    const stage = flipStageRef.current;
+    if (stage === 0) {
+      if (orientation === "front") {
+        flipStageRef.current = 1;
+        flipStartedAtRef.current = now;
+        console.log("🪄 flip stage 1/3: FRONT", { gx: gx.toFixed(2) });
+      }
+      return;
+    }
+
+    if (now - flipStartedAtRef.current > FLIP_PATTERN_WINDOW_MS) {
+      console.log("🪄 flip sequence timeout, resetting");
+      flipStageRef.current = orientation === "front" ? 1 : 0;
+      flipStartedAtRef.current = now;
+      return;
+    }
+
+    if (stage === 1) {
+      if (orientation === "back") {
+        flipStageRef.current = 2;
+        console.log("🪄 flip stage 2/3: BACK", { gx: gx.toFixed(2) });
+      } else if (orientation === "front") {
+        console.log("🪄 flip stage 1/3 re-affirm FRONT", { gx: gx.toFixed(2) });
+      }
+      return;
+    }
+
+    if (stage === 2) {
+      if (orientation === "front") {
+        console.log("🪄 flip stage 3/3: FRONT -> TOGGLE instruction");
+        flipStageRef.current = 0;
+        flipStartedAtRef.current = 0;
+        flipEventRef.current = [];
+        lastFlipToggleAtRef.current = now;
+        toggleInstructionOverlay();
+      } else if (orientation === "back") {
+        console.log("🪄 flip stage 2/3 re-affirm BACK", { gx: gx.toFixed(2) });
+      }
+    }
   }, [sensorData, toggleInstructionOverlay]);
 
   useEffect(() => {
@@ -1165,7 +1204,7 @@ export default function BeatGame({ className }) {
         H: grid · F: fullscreen
       </div>
 
-      {!activeSong && mapReady && !traced && !showHighScoreBoard && (
+      {!instructionOpen && !activeSong && mapReady && !traced && !showHighScoreBoard && (
         <StarTraceScreen
           cursor={menuCursor}
           canvasRect={canvasRect}
@@ -1175,13 +1214,13 @@ export default function BeatGame({ className }) {
           isDrawActive={isDrawActive}
         />
       )}
-      {!activeSong && mapReady && showHighScoreBoard && (
+      {!instructionOpen && !activeSong && mapReady && showHighScoreBoard && (
         <HighScoreBoardOverlay
           rows={scoreboardRows}
           wandOn={isMagicWandOn}
         />
       )}
-      {!activeSong && mapReady && traced && !pendingResult && !showHighScoreBoard && (
+      {!instructionOpen && !activeSong && mapReady && traced && !pendingResult && !showHighScoreBoard && (
         <SongSelectOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
@@ -1195,7 +1234,7 @@ export default function BeatGame({ className }) {
           isDrawActive={isDrawActive}
         />
       )}
-      {!activeSong && mapReady && traced && pendingResult && (
+      {!instructionOpen && !activeSong && mapReady && traced && pendingResult && (
         <PostGameOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
