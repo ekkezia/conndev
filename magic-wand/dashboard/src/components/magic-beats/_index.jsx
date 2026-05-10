@@ -295,19 +295,8 @@ export default function BeatGame({ className }) {
     };
   }, [activeSong]);
 
-  const toggleInstructionOverlay = useCallback(() => {
-    setInstructionOpen((prev) => {
-      const next = !prev;
-      if (next) {
-        setInstructionRunKey((k) => k + 1);
-      } else {
-        setForceSongMenu(false);
-      }
-      return next;
-    });
-  }, []);
-
   const enterInstructionOverlay = useCallback(() => {
+    console.log("🪄 instruction open request");
     setInstructionRunKey((k) => k + 1);
     setInstructionOpen(true);
   }, []);
@@ -325,7 +314,15 @@ export default function BeatGame({ className }) {
         return true;
       },
       toggle: () => {
-        toggleInstructionOverlay();
+        setInstructionOpen((prev) => {
+          if (prev) {
+            console.log("🪄 instruction toggle ignored: already open (locked until complete)");
+            return prev;
+          }
+          console.log("🪄 instruction toggle -> OPEN");
+          setInstructionRunKey((k) => k + 1);
+          return true;
+        });
         return true;
       },
       state: () => ({
@@ -336,7 +333,7 @@ export default function BeatGame({ className }) {
     return () => {
       if (window.magicInstruction) delete window.magicInstruction;
     };
-  }, [enterInstructionOverlay, instructionOpen, instructionRunKey, toggleInstructionOverlay]);
+  }, [enterInstructionOverlay, instructionOpen, instructionRunKey]);
 
   useEffect(() => {
     console.log("🪄 instruction-view:", instructionOpen ? "OPEN" : "CLOSED");
@@ -358,6 +355,11 @@ export default function BeatGame({ className }) {
     const nextEvents = [...flipEventRef.current, { orientation, at: now, gx }]
       .filter((evt) => now - evt.at <= FLIP_PATTERN_WINDOW_MS);
     flipEventRef.current = nextEvents;
+
+    if (instructionOpen) {
+      console.log("🪄 flip ignored: instruction already open");
+      return;
+    }
 
     const cooldownOk = now - lastFlipToggleAtRef.current > FLIP_TOGGLE_COOLDOWN_MS;
     if (!cooldownOk) {
@@ -399,12 +401,12 @@ export default function BeatGame({ className }) {
         flipStartedAtRef.current = 0;
         flipEventRef.current = [];
         lastFlipToggleAtRef.current = now;
-        toggleInstructionOverlay();
+        enterInstructionOverlay();
       } else if (orientation === "back") {
         console.log("🪄 flip stage 2/3 re-affirm BACK", { gx: gx.toFixed(2) });
       }
     }
-  }, [sensorData, toggleInstructionOverlay]);
+  }, [sensorData, instructionOpen, enterInstructionOverlay]);
 
   useEffect(() => {
     if (activeSong || isPreviewingSong) {
@@ -1274,6 +1276,7 @@ export default function BeatGame({ className }) {
           canvasRect={canvasRect}
           isDrawActive={isDrawActive}
           drawState={drawState}
+          powerState={powerState}
           sensorData={sensorData}
           onCompleteDrawToggle={() => {
             setInstructionOpen(false);

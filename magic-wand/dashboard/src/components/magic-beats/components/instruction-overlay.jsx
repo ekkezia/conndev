@@ -63,6 +63,7 @@ export default function InstructionOverlay({
   canvasRect,
   isDrawActive = true,
   drawState,
+  powerState,
   sensorData,
   onCompleteDrawToggle,
 }) {
@@ -100,7 +101,7 @@ export default function InstructionOverlay({
     dataSeenRef.current = false;
     sensitivityBaselineRef.current = null;
     drawBaselineRef.current = Boolean(drawState?.draw);
-  }, [runKey, sensorData, drawState?.draw]);
+  }, [runKey]);
 
   useEffect(() => {
     if (step !== STEPS.INTRO) return undefined;
@@ -115,10 +116,11 @@ export default function InstructionOverlay({
     if (step !== STEPS.POWER) return;
     const len = Array.isArray(sensorData) ? sensorData.length : 0;
     if (len > dataBaselineLenRef.current) dataSeenRef.current = true;
-    if (!dataSeenRef.current) return;
+    const powerOn = powerState?.power === true;
+    if (!dataSeenRef.current && !powerOn) return;
     setStep(STEPS.CLICK);
     setImageSrc(IMAGE_BY_STEP[STEPS.CLICK]);
-  }, [step, sensorData]);
+  }, [step, sensorData, powerState?.power, powerState?.transition, powerState?.timestamp]);
 
   useEffect(() => {
     if (step !== STEPS.CLICK) return undefined;
