@@ -1,4 +1,6 @@
 import { useCallback, useMemo, useRef } from "react";
+import { useWandCursor } from "../hooks/use-wand-cursor";
+import WandCursorSVG from "./wand-cursor-svg";
 
 function formatPlayedAt(value) {
   if (!value) return "Unknown time";
@@ -13,8 +15,16 @@ function formatPlayedAt(value) {
   });
 }
 
-export default function HighScoreBoardOverlay({ rows = [], wandOn = false }) {
+export default function HighScoreBoardOverlay({
+  rows = [],
+  wandOn = false,
+  cursor,
+  canvasRect,
+  isDrawActive = true,
+}) {
   const listScrollRef = useRef(null);
+  const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } =
+    useWandCursor(cursor, canvasRect);
   const items = useMemo(() => {
     const normalized = rows
       .filter(Boolean)
@@ -39,7 +49,20 @@ export default function HighScoreBoardOverlay({ rows = [], wandOn = false }) {
   }, []);
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/74 backdrop-blur-md pointer-events-none">
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/74 backdrop-blur-md"
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
+      onClick={triggerClick}
+    >
+      <svg className="absolute inset-0 z-[120] w-full h-full overflow-visible pointer-events-none">
+        <WandCursorSVG
+          activeCursor={activeCursor}
+          trailItems={trailItems}
+          clickKey={clickKey}
+          isDrawActive={isDrawActive}
+        />
+      </svg>
       <div className="w-full max-w-5xl px-6">
         <div className="relative pointer-events-auto rounded-2xl border border-cream-soda/35 bg-gradient-to-br from-[#ff4fa3]/35 via-[#ff8a86]/35 to-[#ffb43b]/80 p-6 shadow-2xl"
           style={{

@@ -48,6 +48,12 @@ const FLIP_BASELINE_MIN_SAMPLES = 14;
 const GAME_HUD_RING_SIZE = 104;
 const SCOREBOARD_MAX_ROWS = 300;
 
+function toScoreRowArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object" && Array.isArray(value.rows)) return value.rows;
+  return [];
+}
+
 function sanitizeScoreRows(rows = []) {
   if (!Array.isArray(rows)) return [];
   const seen = new Set();
@@ -178,13 +184,23 @@ export default function BeatGame({ className }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const seedRows = toScoreRowArray(SCOREBOARD_SEED_ROWS);
+    let cachedRows = [];
     try {
       const raw = window.localStorage.getItem(SCOREBOARD_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      const merged = sanitizeScoreRows([...(SCOREBOARD_SEED_ROWS ?? []), ...(parsed ?? [])]);
-      setScoreboardRows(merged);
+      if (raw) {
+        cachedRows = toScoreRowArray(JSON.parse(raw));
+      }
+    } catch {
+      // Ignore invalid cache but still load seed rows.
+      cachedRows = [];
+    }
+    const merged = sanitizeScoreRows([...seedRows, ...cachedRows]);
+    setScoreboardRows(merged);
+    try {
       window.localStorage.setItem(SCOREBOARD_STORAGE_KEY, JSON.stringify(merged));
     } catch {}
+    console.log(`🪄 highscores loaded: seed=${seedRows.length}, cache=${cachedRows.length}, merged=${merged.length}`);
   }, []);
 
   useEffect(() => {
@@ -1430,6 +1446,9 @@ export default function BeatGame({ className }) {
         <HighScoreBoardOverlay
           rows={scoreboardRows}
           wandOn={isMagicWandOn}
+          cursor={menuCursor}
+          canvasRect={canvasRect}
+          isDrawActive={isDrawActive}
         />
       )}
       {!instructionOpen && !activeSong && mapReady && !pendingResult && !showHighScoreBoard && (
