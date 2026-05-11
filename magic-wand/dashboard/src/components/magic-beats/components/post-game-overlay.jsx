@@ -4,6 +4,7 @@ import WandCursorSVG from './wand-cursor-svg';
 
 const MAX_NAME_LEN = 5;
 const LETTERS = ['', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
+const SAVE_AFTER_EDIT_COOLDOWN_MS = 450;
 
 export default function PostGameOverlay({
 	cursor,
@@ -18,6 +19,7 @@ export default function PostGameOverlay({
 	const [hoveredButtonId, setHoveredButtonId] = useState(null);
 	const buttonRefs = useRef(new Map());
 	const saveButtonRef = useRef(null);
+	const lastEditAtRef = useRef(0);
 	const {
 		activeCursor,
 		trailItems,
@@ -46,6 +48,7 @@ export default function PostGameOverlay({
 	}, [playedAtMs]);
 
 	const cycleSlot = (slotIndex, dir) => {
+		lastEditAtRef.current = Date.now();
 		setNameSlots((prev) => {
 			const next = [...prev];
 			const current = next[slotIndex] ?? '';
@@ -57,6 +60,7 @@ export default function PostGameOverlay({
 	};
 
 	const backspace = () => {
+		lastEditAtRef.current = Date.now();
 		setNameSlots((prev) => {
 			const next = [...prev];
 			for (let i = next.length - 1; i >= 0; i -= 1) {
@@ -68,7 +72,10 @@ export default function PostGameOverlay({
 			return next;
 		});
 	};
-	const clear = () => setNameSlots(Array(MAX_NAME_LEN).fill(''));
+	const clear = () => {
+		lastEditAtRef.current = Date.now();
+		setNameSlots(Array(MAX_NAME_LEN).fill(''));
+	};
 
 	useEffect(() => {
 		if (!activeCursor) {
@@ -109,13 +116,19 @@ export default function PostGameOverlay({
 
 	const handleSave = (event) => {
 		if (!canSubmit) return;
+		if (Date.now() - lastEditAtRef.current < SAVE_AFTER_EDIT_COOLDOWN_MS) return;
 		const pointX =
 			Number.isFinite(event?.clientX) ? event.clientX : activeCursor?.x;
 		const pointY =
 			Number.isFinite(event?.clientY) ? event.clientY : activeCursor?.y;
-		const isOverSave =
-			hoveredButtonId === 'key-save' ||
-			isPointInsideElement(saveButtonRef.current, pointX, pointY);
+		const isOverSaveByCursor = hoveredButtonId === 'key-save';
+		const isOverSaveByPoint = isPointInsideElement(
+			saveButtonRef.current,
+			pointX,
+			pointY,
+		);
+		// Require hovered state as source of truth to avoid stale coordinate clicks.
+		const isOverSave = isOverSaveByCursor && isOverSaveByPoint;
 		if (!isOverSave) return;
 		onSubmit(name.trim());
 	};

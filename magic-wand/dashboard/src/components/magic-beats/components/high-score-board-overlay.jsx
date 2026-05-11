@@ -137,13 +137,13 @@ export default function HighScoreBoardOverlay({
                   ))}
                 </div>
               </div>
-              <div className="w-20 max-h-[52vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-2.5 flex flex-col items-stretch">
+              <div className="w-28 max-h-[52vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-3 flex flex-col items-stretch">
                 <button
                   type="button"
                   ref={scrollUpRef}
                   onClick={() => scrollListBy(-180)}
                   className={`
-                    beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center
+                    beat-menu-option w-full flex-1 rounded-lg font-mono text-3xl text-cream-soda flex items-center justify-center
                     ${hoveredControlId === "scroll-up" ? "imu-hover-target is-selected" : ""}
                   `}
                   data-clickable="true"
@@ -155,7 +155,7 @@ export default function HighScoreBoardOverlay({
                   ref={scrollDownRef}
                   onClick={() => scrollListBy(180)}
                   className={`
-                    beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center mt-2.5
+                    beat-menu-option w-full flex-1 rounded-lg font-mono text-3xl text-cream-soda flex items-center justify-center mt-2.5
                     ${hoveredControlId === "scroll-down" ? "imu-hover-target is-selected" : ""}
                   `}
                   data-clickable="true"
