@@ -17,6 +17,7 @@ export default function PostGameOverlay({
 	const [nameSlots, setNameSlots] = useState(Array(MAX_NAME_LEN).fill(''));
 	const [hoveredButtonId, setHoveredButtonId] = useState(null);
 	const buttonRefs = useRef(new Map());
+	const saveButtonRef = useRef(null);
 	const {
 		activeCursor,
 		trailItems,
@@ -24,7 +25,11 @@ export default function PostGameOverlay({
 		onMouseLeave,
 		clickKey,
 		triggerClick,
-	} = useWandCursor(cursor, canvasRect);
+	} = useWandCursor(cursor, canvasRect, {
+		enableTrail: true,
+		smoothWandCursor: true,
+		smoothFactor: 0.28,
+	});
 
 	const name = useMemo(() => nameSlots.join(''), [nameSlots]);
 	const canSubmit = useMemo(() => name.trim().length > 0, [name]);
@@ -94,6 +99,25 @@ export default function PostGameOverlay({
 			return;
 		}
 		buttonRefs.current.set(id, el);
+	};
+
+	const isPointInsideElement = (el, x, y) => {
+		if (!el || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+		const rect = el.getBoundingClientRect();
+		return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+	};
+
+	const handleSave = (event) => {
+		if (!canSubmit) return;
+		const pointX =
+			Number.isFinite(event?.clientX) ? event.clientX : activeCursor?.x;
+		const pointY =
+			Number.isFinite(event?.clientY) ? event.clientY : activeCursor?.y;
+		const isOverSave =
+			hoveredButtonId === 'key-save' ||
+			isPointInsideElement(saveButtonRef.current, pointX, pointY);
+		if (!isOverSave) return;
+		onSubmit(name.trim());
 	};
 
 	return (
@@ -211,8 +235,11 @@ export default function PostGameOverlay({
 							<button
 								type="button"
 								disabled={!canSubmit}
-								ref={bindButtonRef('key-save')}
-								onClick={() => canSubmit && onSubmit(name.trim())}
+								ref={(el) => {
+									bindButtonRef('key-save')(el);
+									saveButtonRef.current = el;
+								}}
+								onClick={handleSave}
 								className={`
                   beat-menu-start rounded-xl px-10 py-5 font-mono text-3xl font-bold uppercase min-w-[16rem]
                   ${canSubmit ? 'is-ready text-cream-soda cursor-pointer !bg-fuchsia-600 hover:!bg-fuchsia-500 !border-fuchsia-300' : 'is-disabled text-cream-soda/70 cursor-not-allowed !bg-fuchsia-900/40'}
