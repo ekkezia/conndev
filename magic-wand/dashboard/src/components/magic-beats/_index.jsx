@@ -1508,7 +1508,7 @@ export default function BeatGame({ className }) {
       )}
       {!instructionOpen && !activeSong && mapReady && pendingResult && (
         <PostGameOverlay
-          cursor={menuCursor}
+          cursor={overlayCursor ?? mousePos ?? menuCursor}
           canvasRect={canvasRect}
           song={pendingResult.song}
           score={pendingResult.score}
