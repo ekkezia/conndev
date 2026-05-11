@@ -5,6 +5,8 @@ import WandCursorSVG from './wand-cursor-svg';
 const MAX_NAME_LEN = 5;
 const LETTERS = ['', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
 const SAVE_AFTER_EDIT_COOLDOWN_MS = 450;
+const DEFAULT_HOVER_SLOP_PX = 10;
+const SAVE_HOVER_SLOP_PX = 24;
 
 export default function PostGameOverlay({
 	cursor,
@@ -30,7 +32,7 @@ export default function PostGameOverlay({
 	} = useWandCursor(cursor, canvasRect, {
 		enableTrail: true,
 		smoothWandCursor: true,
-		smoothFactor: 0.28,
+		smoothFactor: 0.42,
 	});
 
 	const name = useMemo(() => nameSlots.join(''), [nameSlots]);
@@ -87,11 +89,12 @@ export default function PostGameOverlay({
 		for (const [id, el] of buttonRefs.current.entries()) {
 			if (!el) continue;
 			const rect = el.getBoundingClientRect();
+			const slop = id === 'key-save' ? SAVE_HOVER_SLOP_PX : DEFAULT_HOVER_SLOP_PX;
 			const inside =
-				activeCursor.x >= rect.left &&
-				activeCursor.x <= rect.right &&
-				activeCursor.y >= rect.top &&
-				activeCursor.y <= rect.bottom;
+				activeCursor.x >= rect.left - slop &&
+				activeCursor.x <= rect.right + slop &&
+				activeCursor.y >= rect.top - slop &&
+				activeCursor.y <= rect.bottom + slop;
 			if (inside) {
 				hoveredId = id;
 				break;
@@ -108,28 +111,32 @@ export default function PostGameOverlay({
 		buttonRefs.current.set(id, el);
 	};
 
-	const isPointInsideElement = (el, x, y) => {
+	const isPointInsideElement = (el, x, y, slop = 0) => {
 		if (!el || !Number.isFinite(x) || !Number.isFinite(y)) return false;
 		const rect = el.getBoundingClientRect();
-		return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+		return (
+			x >= rect.left - slop &&
+			x <= rect.right + slop &&
+			y >= rect.top - slop &&
+			y <= rect.bottom + slop
+		);
 	};
 
 	const handleSave = (event) => {
 		if (!canSubmit) return;
 		if (Date.now() - lastEditAtRef.current < SAVE_AFTER_EDIT_COOLDOWN_MS) return;
-		const pointX =
-			Number.isFinite(event?.clientX) ? event.clientX : activeCursor?.x;
-		const pointY =
-			Number.isFinite(event?.clientY) ? event.clientY : activeCursor?.y;
-		const isOverSaveByCursor = hoveredButtonId === 'key-save';
-		const isOverSaveByPoint = isPointInsideElement(
-			saveButtonRef.current,
-			pointX,
-			pointY,
-		);
-		// Require hovered state as source of truth to avoid stale coordinate clicks.
-		const isOverSave = isOverSaveByCursor && isOverSaveByPoint;
-		if (!isOverSave) return;
+		const pointX = Number.isFinite(event?.clientX) ? event.clientX : null;
+		const pointY = Number.isFinite(event?.clientY) ? event.clientY : null;
+		// Source of truth: must currently be hovered on save.
+		if (hoveredButtonId !== 'key-save') return;
+		// If coordinates are present, accept slightly forgiving bounds.
+		if (
+			pointX != null &&
+			pointY != null &&
+			!isPointInsideElement(saveButtonRef.current, pointX, pointY, SAVE_HOVER_SLOP_PX)
+		) {
+			return;
+		}
 		onSubmit(name.trim());
 	};
 
