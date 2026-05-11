@@ -14,17 +14,22 @@ function SongSelectModal({ onStart }) {
 	const [selected, setSelected] = useState(null);
 
 	return (
-		<div className="absolute inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm">
+		<div className="absolute inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+		style={{
+					background:
+						'linear-gradient(135deg, rgba(255,79,163,0.5) 0%, rgba(255,138,134,0.75) 50%, rgba(255,180,59,0.5) 100%)',
+				}}
+		>
 			<div
 				className="bg-black border border-white/15 rounded-2xl p-8 w-full max-w-sm flex flex-col gap-6 shadow-2xl"
 				style={{
 					background:
-						'linear-gradient(135deg, rgba(255,79,163,0.5) 0%, rgba(255,138,134,0.5) 50%, rgba(255,180,59,0.5) 100%)',
+						'linear-gradient(135deg, rgba(255,79,163,0.5) 0%, rgba(255,138,134,0.75) 50%, rgba(255,180,59,0.5) 100%)',
 				}}
 			>
 				<div>
 					<h2 className="text-white font-mono text-xl font-bold tracking-tight">
-						MagicBeats
+						MagicBeats Trax
 					</h2>
 					<p className="text-white/40 font-mono text-xs mt-1">
 						select a track to play

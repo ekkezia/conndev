@@ -11,12 +11,15 @@ export default function SongSelectOverlay({
   isDrawActive = true,
 }) {
   const [selected, setSelected] = useState(null);
+  const [hoveredControlId, setHoveredControlId] = useState(null);
   const previewAudioRef = useRef(null);
   const previewSrcRef = useRef(null);
   const songBySrcRef = useRef(new Map());
   const startLockRef = useRef(false);
   const songButtonRefs = useRef([]);
   const listScrollRef = useRef(null);
+  const scrollUpRef = useRef(null);
+  const scrollDownRef = useRef(null);
   const hoveredSongSrcRef = useRef(null);
   const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } = useWandCursor(cursor, canvasRect);
 
@@ -82,11 +85,14 @@ export default function SongSelectOverlay({
   const scrollListBy = useCallback((delta) => {
     const el = listScrollRef.current;
     if (!el) return;
-    el.scrollBy({ top: delta, behavior: "smooth" });
+    el.scrollBy({ top: delta, behavior: "auto" });
   }, []);
 
   useEffect(() => {
-    if (!activeCursor) return;
+    if (!activeCursor) {
+      setHoveredControlId(null);
+      return;
+    }
 
     let hoveredSong = null;
     for (let idx = 0; idx < SONGS.length; idx += 1) {
@@ -112,6 +118,26 @@ export default function SongSelectOverlay({
     } else if (!hoveredSrc) {
       hoveredSongSrcRef.current = null;
     }
+
+    let hoveredControl = null;
+    const controls = [
+      ["scroll-up", scrollUpRef.current],
+      ["scroll-down", scrollDownRef.current],
+    ];
+    for (const [id, el] of controls) {
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const inside =
+        activeCursor.x >= rect.left &&
+        activeCursor.x <= rect.right &&
+        activeCursor.y >= rect.top &&
+        activeCursor.y <= rect.bottom;
+      if (inside) {
+        hoveredControl = id;
+        break;
+      }
+    }
+    setHoveredControlId(hoveredControl);
   }, [activeCursor, playPreview]);
 
   return (
@@ -125,13 +151,21 @@ export default function SongSelectOverlay({
         <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} isDrawActive={isDrawActive} />
       </svg>
       <div className="w-full max-w-2xl px-6">
-        <div className="rounded-3xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/48 via-[#ff8a86]/34 to-[#ffb43b]/42 shadow-2xl backdrop-blur-md p-8 md:p-10 flex flex-col gap-6">
+        <div className="relative rounded-3xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/48 via-[#ff8a86]/34 to-[#ffb43b]/42 shadow-2xl backdrop-blur-md p-8 md:p-10 flex flex-col gap-6 overflow-hidden isolate"
+          style={{
+            background: 'linear-gradient(135deg, rgba(255,79,163,0.3) 0%, rgba(255,138,134,0.5) 50%, rgba(255,180,59,0.25) 100%)',
+          }}
+        >
         <div>
           <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">MagicBeats</h2>
           <p className="text-cream-soda/50 font-mono text-2xl mt-2">select a track to play</p>
         </div>
         <div className="flex items-stretch gap-3">
-          <div ref={listScrollRef} className="flex-1 flex flex-col gap-2 max-h-[50vh] overflow-y-auto pr-1 select-none rounded-2xl bg-gradient-to-r from-[#ff4fa3]/22 via-[#ff8a86]/18 to-[#ffb43b]/24 p-2">
+          <div
+            ref={listScrollRef}
+            className="relative isolate flex-1 flex flex-col gap-2 max-h-[50vh] overflow-y-auto overscroll-contain pr-1 select-none rounded-2xl bg-gradient-to-r from-[#ff4fa3]/22 via-[#ff8a86]/18 to-[#ffb43b]/24 p-2 [transform:translateZ(0)]"
+            style={{ contain: "paint" }}
+          >
             {SONGS.map((song, idx) => (
               <button
                 key={`${song.src}-${idx}`}
@@ -152,41 +186,58 @@ export default function SongSelectOverlay({
                   playPreview(song);
                 }}
                 className={`
-                  beat-menu-option flex flex-col gap-0.5 text-left px-4 py-3 rounded-xl border transition-all duration-150 select-none
+                  beat-menu-option relative z-0 flex flex-col gap-0.5 text-left px-4 py-3 rounded-xl border transition-all duration-150 select-none
                   ${selected?.src === song.src ? "is-selected text-cream-soda" : "is-idle text-cream-soda/95"}
                 `}
               >
-                <span className="font-mono text-2xl font-semibold">{song.title}</span>
-                <span className="font-mono text-xl text-cream-soda/55">
+                <span className="font-mono text-2xl font-semibold leading-tight">{song.title}</span>
+                <span className="font-mono text-xl text-cream-soda/55 leading-snug">
                   {song.artist} · {song.bpm} BPM
                 </span>
               </button>
             ))}
           </div>
 
-          <div className="w-20 max-h-[50vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-2.5 flex flex-col items-center">
+          <div className="w-20 max-h-[50vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-2.5 flex flex-col items-stretch">
             <button
               type="button"
+              ref={scrollUpRef}
               onClick={() => scrollListBy(-180)}
-              className="beat-menu-option w-full h-14 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center"
+              className={`
+                beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center
+                ${hoveredControlId === "scroll-up" ? "imu-hover-target is-selected" : ""}
+              `}
               data-clickable="true"
             >
               ▲
             </button>
-            <div className="my-2.5 w-2.5 flex-1 rounded-full bg-cream-soda/20 relative overflow-hidden">
-              <div className="absolute inset-x-0 top-1/4 h-1/4 rounded-full bg-cream-soda/55" />
-            </div>
             <button
               type="button"
+              ref={scrollDownRef}
               onClick={() => scrollListBy(180)}
-              className="beat-menu-option w-full h-14 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center"
+              className={`
+                beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center mt-2.5
+                ${hoveredControlId === "scroll-down" ? "imu-hover-target is-selected" : ""}
+              `}
               data-clickable="true"
             >
               ▼
             </button>
           </div>
         </div>
+
         </div>
+      </div>
+
+      <div className="fixed bottom-4 left-5 z-[80] pointer-events-none text-left">
+        <p className="text-cream-soda/90 font-mono text-[10px] md:text-xs uppercase tracking-wider mb-1 max-w-[240px]">
+          CLICK DRAW BUTTON TO TOGGLE BETWEEN TRAX LIST AND PRODIGY LIST
+        </p>
+        <img
+          src="/images/magic-wand-draw.png"
+          alt="Magic wand draw button"
+          className="w-28 md:w-36 rounded-lg border border-cream-soda/45 shadow-lg object-cover"
+        />
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import paper from "paper";
 import { io } from "socket.io-client";
 import { useIMU } from "../../contexts/IMUContext";
 import { REACT_APP_SERVER_URL, CANVAS_RATIO, SFX } from "../../config";
+import SCOREBOARD_SEED_ROWS from "../../config/highscores.seed.json";
 import MapillaryBg from "./mapillary-bg";
 import { preloadSfx } from "./audio";
 import {
@@ -37,7 +38,7 @@ const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 const SCOREBOARD_STORAGE_KEY = "magicbeats-highscores-v1";
 const INSTRUCTION_DONE_STORAGE_KEY = "magicbeats-instruction-complete-v1";
 const FLIP_GX_HIGH_THRESHOLD = 11.5;
-const FLIP_PATTERN_WINDOW_MS = 3200;
+const FLIP_PATTERN_WINDOW_MS = 5200;
 const FLIP_TOGGLE_COOLDOWN_MS = 2200;
 const FLIP_STAGE_MIN_GAP_MS = 180;
 const FLIP_DOT_UPRIGHT_THRESHOLD = 0.72;
@@ -45,6 +46,32 @@ const FLIP_DOT_UPSIDEDOWN_THRESHOLD = -0.72;
 const FLIP_BASELINE_BLEND = 0.05;
 const FLIP_BASELINE_MIN_SAMPLES = 14;
 const GAME_HUD_RING_SIZE = 104;
+const SCOREBOARD_MAX_ROWS = 300;
+
+function sanitizeScoreRows(rows = []) {
+  if (!Array.isArray(rows)) return [];
+  const seen = new Set();
+  return rows
+    .filter((row) => row && typeof row === "object")
+    .map((row) => ({
+      id: String(row.id ?? `${row.name ?? "player"}-${row.playedAtMs ?? Date.now()}`),
+      name: String(row.name ?? "PLAYER"),
+      score: Number.isFinite(Number(row.score)) ? Number(row.score) : 0,
+      songTitle: String(row.songTitle ?? "Unknown Song"),
+      songArtist: String(row.songArtist ?? ""),
+      playedAt: String(row.playedAt ?? new Date().toISOString()),
+      playedAtMs: Number.isFinite(Number(row.playedAtMs))
+        ? Number(row.playedAtMs)
+        : Date.now(),
+    }))
+    .filter((row) => {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+      return true;
+    })
+    .sort((a, b) => b.score - a.score || b.playedAtMs - a.playedAtMs)
+    .slice(0, SCOREBOARD_MAX_ROWS);
+}
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function BeatGame({ className }) {
@@ -144,6 +171,7 @@ export default function BeatGame({ className }) {
   const flipLastOrientationRef = useRef(null);
   const flipBaselineRef = useRef(null); // normalized gravity direction for "not flipped"
   const flipBaselineSamplesRef = useRef(0);
+  const prevDrawForMenuForceRef = useRef(Boolean(drawState?.draw));
 
   const isMagicWandOn = Boolean(drawState?.draw);
   const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
@@ -152,23 +180,10 @@ export default function BeatGame({ className }) {
     if (typeof window === "undefined") return;
     try {
       const raw = window.localStorage.getItem(SCOREBOARD_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-      const sanitized = parsed
-        .filter((row) => row && typeof row === "object")
-        .map((row) => ({
-          id: String(row.id ?? `${row.name ?? "player"}-${row.playedAtMs ?? Date.now()}`),
-          name: String(row.name ?? "PLAYER"),
-          score: Number.isFinite(Number(row.score)) ? Number(row.score) : 0,
-          songTitle: String(row.songTitle ?? "Unknown Song"),
-          songArtist: String(row.songArtist ?? ""),
-          playedAt: String(row.playedAt ?? new Date().toISOString()),
-          playedAtMs: Number.isFinite(Number(row.playedAtMs)) ? Number(row.playedAtMs) : Date.now(),
-        }))
-        .sort((a, b) => b.score - a.score || b.playedAtMs - a.playedAtMs)
-        .slice(0, 120);
-      setScoreboardRows(sanitized);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const merged = sanitizeScoreRows([...(SCOREBOARD_SEED_ROWS ?? []), ...(parsed ?? [])]);
+      setScoreboardRows(merged);
+      window.localStorage.setItem(SCOREBOARD_STORAGE_KEY, JSON.stringify(merged));
     } catch {}
   }, []);
 
@@ -182,9 +197,7 @@ export default function BeatGame({ className }) {
 
   const addScoreboardRow = useCallback((row) => {
     setScoreboardRows((prev) => {
-      const next = [row, ...prev]
-        .sort((a, b) => b.score - a.score || b.playedAtMs - a.playedAtMs)
-        .slice(0, 120);
+      const next = sanitizeScoreRows([row, ...prev]);
       try {
         if (typeof window !== "undefined") {
           window.localStorage.setItem(SCOREBOARD_STORAGE_KEY, JSON.stringify(next));
@@ -193,6 +206,30 @@ export default function BeatGame({ className }) {
       return next;
     });
   }, []);
+
+  const exportHighscoresToJson = useCallback(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const rows = sanitizeScoreRows(scoreboardRows);
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      source: "magicbeats-local-cache",
+      total: rows.length,
+      rows,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `magicbeats-highscores-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    console.log(`🪄 exported highscores: ${rows.length} rows`);
+  }, [scoreboardRows]);
 
   const addScore = useCallback((delta) => {
     setScore((current) => {
@@ -260,6 +297,27 @@ export default function BeatGame({ className }) {
     }
     prevDrawStopPromptRef.current = isOn;
   }, [activeSong, drawState?.draw, drawState?.timestamp, openStopPrompt]);
+
+  useEffect(() => {
+    const prev = prevDrawForMenuForceRef.current;
+    const next = Boolean(drawState?.draw);
+    if (prev !== next && forceSongMenu) {
+      setForceSongMenu(false);
+    }
+    prevDrawForMenuForceRef.current = next;
+  }, [drawState?.draw, forceSongMenu]);
+
+  useEffect(() => {
+    if (!stopPromptOpen) return;
+    // Hide the underlying Paper cursor/trails while the stop prompt is open.
+    trailItemsRef.current.forEach((item) => item.path?.remove());
+    trailItemsRef.current = [];
+    lastTrailPosRef.current = null;
+    if (cursorDotRef.current) {
+      cursorDotRef.current.remove();
+      cursorDotRef.current = null;
+    }
+  }, [stopPromptOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -491,7 +549,7 @@ export default function BeatGame({ className }) {
     if (!mapReady) return;
 
     if (!idleAudioRef.current) {
-      const idle = new Audio("/music/steady.mp3");
+      const idle = new Audio("/music/foreplay.wav");
       idle.loop = true;
       idle.volume = 0.45;
       idleAudioRef.current = idle;
@@ -681,7 +739,7 @@ export default function BeatGame({ className }) {
     return () => socketRef.current?.disconnect();
   }, []);
 
-  // ─── H/F KEYS: grid + fullscreen ───────────────────────────────────────────
+  // ─── H/F/S KEYS: grid + fullscreen + highscores export ─────────────────────
   useEffect(() => {
     const isEditableTarget = (target) =>
       target instanceof HTMLElement &&
@@ -717,11 +775,17 @@ export default function BeatGame({ className }) {
         } catch (err) {
           console.warn("Fullscreen toggle failed:", err);
         }
+        return;
+      }
+
+      if (e.key === "s" || e.key === "S") {
+        e.preventDefault();
+        exportHighscoresToJson();
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, []);
+  }, [exportHighscoresToJson]);
 
   useEffect(() => {
     const syncFullscreen = () => {
@@ -1174,7 +1238,12 @@ export default function BeatGame({ className }) {
     console.log("🎛️ sensitivity:", next, "timestamp:", latest?.timestamp ?? Date.now());
   }, [sensorData]);
 
+  const latestSensitivity = Number(
+    sensorData?.length ? sensorData[sensorData.length - 1]?.sensor?.sensitivity : NaN,
+  );
+
   useEffect(() => {
+    if (stopPromptOpen) return;
     const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
     const sx = Number(latest?.screenSize?.width);
     const sy = Number(latest?.screenSize?.height);
@@ -1190,7 +1259,31 @@ export default function BeatGame({ className }) {
     if (mousePos?.x != null && mousePos?.y != null) {
       setOverlayCursor({ x: mousePos.x, y: mousePos.y });
     }
-  }, [sensorData, mousePos]);
+  }, [sensorData, mousePos, stopPromptOpen]);
+
+  useEffect(() => {
+    if (!stopPromptOpen) return undefined;
+    let rafId;
+    const loop = () => {
+      rafId = requestAnimationFrame(loop);
+      const lerp = cursorLerpRef.current;
+      const bezier = cursorBezierRef.current;
+      if (!lerp || !bezier) return;
+
+      if (bezier.t < 1) {
+        bezier.t = Math.min(1, bezier.t + 0.07);
+        const pos = evalBezier(bezier, bezier.t);
+        bezier.vel = { x: pos.x - lerp.x, y: pos.y - lerp.y };
+        lerp.x = pos.x;
+        lerp.y = pos.y;
+      }
+
+      const off = canvasRectRef.current;
+      setOverlayCursor({ x: lerp.x + (off?.x ?? 0), y: lerp.y + (off?.y ?? 0) });
+    };
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, [stopPromptOpen]);
 
   return (
     <div className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}>
@@ -1249,38 +1342,34 @@ export default function BeatGame({ className }) {
         </div>
       )}
 
-      {activeSong && (
-        <div className="absolute top-3 right-3 pointer-events-none z-30">
-          <svg width={GAME_HUD_RING_SIZE} height={GAME_HUD_RING_SIZE} viewBox="0 0 120 120">
-            <defs>
-              <linearGradient id="gameSensitivityRingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#ff2457" />
-                <stop offset="100%" stopColor="#b02dff" />
-              </linearGradient>
-            </defs>
-            <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
-            <circle
-              cx="60"
-              cy="60"
-              r="46"
-              fill="none"
-              stroke="url(#gameSensitivityRingGradient)"
-              strokeWidth="12"
-              strokeLinecap="round"
-              strokeDasharray="248 70"
-              transform="rotate(-90 60 60)"
-            />
-            <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
-              {Number.isFinite(Number(sensorData?.length ? sensorData[sensorData.length - 1]?.sensor?.sensitivity : null))
-                ? Number(sensorData[sensorData.length - 1]?.sensor?.sensitivity).toFixed(1)
-                : "--"}
-            </text>
-            <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.96)" letterSpacing="1.2">
-              SENSITIVITY
-            </text>
-          </svg>
-        </div>
-      )}
+      <div className="fixed top-3 right-3 pointer-events-none z-[120]">
+        <svg width={GAME_HUD_RING_SIZE} height={GAME_HUD_RING_SIZE} viewBox="0 0 120 120">
+          <defs>
+            <linearGradient id="gameSensitivityRingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#ff2457" />
+              <stop offset="100%" stopColor="#b02dff" />
+            </linearGradient>
+          </defs>
+          <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
+          <circle
+            cx="60"
+            cy="60"
+            r="46"
+            fill="none"
+            stroke="url(#gameSensitivityRingGradient)"
+            strokeWidth="12"
+            strokeLinecap="round"
+            strokeDasharray="248 70"
+            transform="rotate(-90 60 60)"
+          />
+          <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
+            {Number.isFinite(latestSensitivity) ? latestSensitivity.toFixed(1) : "--"}
+          </text>
+          <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.96)" letterSpacing="1.2">
+            SENSITIVITY
+          </text>
+        </svg>
+      </div>
 
       {gridVisible && sensorData && sensorData.length > 0 && (
         <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-black/60 text-yellow-300 font-mono text-xs px-2 py-1 rounded pointer-events-none flex flex-col gap-0.5 items-center z-30">
@@ -1334,7 +1423,7 @@ export default function BeatGame({ className }) {
 
       {/* key hints */}
       <div className="absolute bottom-2 right-2 text-cream-soda/30 font-mono text-[10px] pointer-events-none">
-        H: grid · F: fullscreen
+        H: grid · F: fullscreen · S: save highscores json
       </div>
 
       {!instructionOpen && !activeSong && mapReady && showHighScoreBoard && (
@@ -1399,7 +1488,8 @@ export default function BeatGame({ className }) {
           drawState={drawState}
           powerState={powerState}
           sensorData={sensorData}
-          onCompleteInstruction={() => {
+          onCompleteInstruction={(options = {}) => {
+            const skipPractice = options?.skipPractice === true;
             lastFlipToggleAtRef.current = Date.now();
             flipStageRef.current = 0;
             flipStartedAtRef.current = 0;
@@ -1416,7 +1506,8 @@ export default function BeatGame({ className }) {
             }
             setPendingResult(null);
             setActiveSong(null);
-            setForceSongMenu(false);
+            // If user explicitly skipped star tracing, go straight to song list.
+            setForceSongMenu(skipPractice);
             setStopPromptOpen(false);
           }}
         />
@@ -1426,7 +1517,6 @@ export default function BeatGame({ className }) {
         <StopPromptOverlay
           cursor={overlayCursor ?? mousePos ?? menuCursor}
           canvasRect={canvasRect}
-          isDrawActive={isDrawActive}
           onConfirm={confirmStopToMenu}
           onCancel={resumeFromStopPrompt}
         />

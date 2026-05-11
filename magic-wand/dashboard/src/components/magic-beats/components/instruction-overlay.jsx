@@ -31,45 +31,12 @@ const COPY_BY_STEP = {
     "Adjust the sensitivity level that matches your magical movement speed.",
   [STEPS.DRAW]: "Press the DRAW START/STOP yellow button to play MagicBeats.",
 };
-const TRACE_RING_SIZE = 112;
+const SENSITIVITY_MIN_STAGE_DELTA = 3;
 
 function getLatestSensitivity(sensorData) {
   const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
   const value = Number(latest?.sensor?.sensitivity);
   return Number.isFinite(value) ? value : null;
-}
-
-function SensitivityRing({ sensitivityValue = null }) {
-  return (
-    <div className="absolute top-4 right-4 pointer-events-none z-20">
-      <svg width={TRACE_RING_SIZE} height={TRACE_RING_SIZE} viewBox="0 0 120 120">
-        <defs>
-          <linearGradient id="traceRingGradientInstruction" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#ff2457" />
-            <stop offset="100%" stopColor="#b02dff" />
-          </linearGradient>
-        </defs>
-        <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
-        <circle
-          cx="60"
-          cy="60"
-          r="46"
-          fill="none"
-          stroke="url(#traceRingGradientInstruction)"
-          strokeWidth="12"
-          strokeLinecap="round"
-          strokeDasharray="248 70"
-          transform="rotate(-90 60 60)"
-        />
-        <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
-          {Number.isFinite(Number(sensitivityValue)) ? Number(sensitivityValue).toFixed(1) : "--"}
-        </text>
-        <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.96)" letterSpacing="1.2">
-          SENSITIVITY
-        </text>
-      </svg>
-    </div>
-  );
 }
 
 export default function InstructionOverlay({
@@ -91,6 +58,8 @@ export default function InstructionOverlay({
   const openedAtMsRef = useRef(0);
   const dataSeenRef = useRef(false);
   const sensitivityBaselineRef = useRef(null);
+  const sensitivityStageStartedAtRef = useRef(0);
+  const sensitivityMoveCountRef = useRef(0);
   const drawBaselineRef = useRef(Boolean(drawState?.draw));
   const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } =
     useWandCursor(cursor, canvasRect);
@@ -169,15 +138,31 @@ export default function InstructionOverlay({
 
   useEffect(() => {
     if (step !== STEPS.SENSITIVITY) return;
+    sensitivityStageStartedAtRef.current = Date.now();
+    sensitivityBaselineRef.current = null;
+    sensitivityMoveCountRef.current = 0;
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== STEPS.SENSITIVITY) return;
+    const latest = sensorData?.length ? sensorData[sensorData.length - 1] : null;
+    const latestTs = Number(latest?.timestamp);
+    if (Number.isFinite(latestTs) && latestTs < sensitivityStageStartedAtRef.current) return;
     if (!Number.isFinite(latestSensitivity)) return;
     if (!Number.isFinite(sensitivityBaselineRef.current)) {
       sensitivityBaselineRef.current = latestSensitivity;
       return;
     }
-    if (Math.abs(latestSensitivity - sensitivityBaselineRef.current) < 0.05) return;
+    const delta = Math.abs(latestSensitivity - sensitivityBaselineRef.current);
+    if (delta >= SENSITIVITY_MIN_STAGE_DELTA) {
+      sensitivityMoveCountRef.current += 1;
+    } else {
+      sensitivityMoveCountRef.current = 0;
+    }
+    if (sensitivityMoveCountRef.current < 2) return;
     spawnFlash("MAGIC ADJUSTED!");
     moveToStep(STEPS.DRAW);
-  }, [step, latestSensitivity]);
+  }, [step, latestSensitivity, sensorData]);
 
   useEffect(() => {
     if (step !== STEPS.DRAW) return;
@@ -216,8 +201,10 @@ export default function InstructionOverlay({
           cursor={cursor}
           canvasRect={canvasRect}
           isDrawActive={isDrawActive}
-          sensitivityValue={latestSensitivity}
           onPerfectTraceHit={() => {}}
+          onSkip={() => {
+            onCompleteInstruction?.({ skipPractice: true });
+          }}
           onComplete={() => {
             playSfx(SFX.perfect, 0.72);
             onCompleteInstruction?.();
@@ -242,8 +229,6 @@ export default function InstructionOverlay({
           isDrawActive={isDrawActive}
         />
       </svg>
-
-      <SensitivityRing sensitivityValue={latestSensitivity} />
 
       <div className="w-full max-w-5xl px-6">
         <div className="rounded-3xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/52 via-[#ff8a86]/36 to-[#ffb43b]/48 shadow-2xl backdrop-blur-md p-7 md:p-9">

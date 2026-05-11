@@ -2,13 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useWandCursor } from '../hooks/use-wand-cursor';
 import WandCursorSVG from './wand-cursor-svg';
 
-const MAX_NAME_LEN = 12;
-
-const KEY_ROWS = [
-	['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-	['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
-	['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
-];
+const MAX_NAME_LEN = 5;
+const LETTERS = ['', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')];
 
 export default function PostGameOverlay({
 	cursor,
@@ -19,7 +14,7 @@ export default function PostGameOverlay({
 	playedAtMs,
 	onSubmit,
 }) {
-	const [name, setName] = useState('');
+	const [nameSlots, setNameSlots] = useState(Array(MAX_NAME_LEN).fill(''));
 	const [hoveredButtonId, setHoveredButtonId] = useState(null);
 	const buttonRefs = useRef(new Map());
 	const {
@@ -31,6 +26,7 @@ export default function PostGameOverlay({
 		triggerClick,
 	} = useWandCursor(cursor, canvasRect);
 
+	const name = useMemo(() => nameSlots.join(''), [nameSlots]);
 	const canSubmit = useMemo(() => name.trim().length > 0, [name]);
 	const playedAtLabel = useMemo(() => {
 		const d = new Date(playedAtMs ?? Date.now());
@@ -44,15 +40,30 @@ export default function PostGameOverlay({
 		});
 	}, [playedAtMs]);
 
-	const appendChar = (ch) => {
-		setName((prev) => {
-			if (prev.length >= MAX_NAME_LEN) return prev;
-			return prev + ch;
+	const cycleSlot = (slotIndex, dir) => {
+		setNameSlots((prev) => {
+			const next = [...prev];
+			const current = next[slotIndex] ?? '';
+			const currentIdx = Math.max(0, LETTERS.indexOf(current));
+			const targetIdx = (currentIdx + dir + LETTERS.length) % LETTERS.length;
+			next[slotIndex] = LETTERS[targetIdx];
+			return next;
 		});
 	};
 
-	const backspace = () => setName((prev) => prev.slice(0, -1));
-	const clear = () => setName('');
+	const backspace = () => {
+		setNameSlots((prev) => {
+			const next = [...prev];
+			for (let i = next.length - 1; i >= 0; i -= 1) {
+				if (next[i]) {
+					next[i] = '';
+					break;
+				}
+			}
+			return next;
+		});
+	};
+	const clear = () => setNameSlots(Array(MAX_NAME_LEN).fill(''));
 
 	useEffect(() => {
 		if (!activeCursor) {
@@ -128,7 +139,7 @@ export default function PostGameOverlay({
 
 					<div className="mt-6">
 						<p className="text-cream-soda/80 font-mono text-lg mb-2">
-							type your name
+							pick up to 5 letters
 						</p>
 						<div className="min-h-[64px] rounded-xl border border-cream-soda/45 bg-gradient-to-r from-[#ff4fa3]/20 to-[#ffb43b]/24 px-4 py-3 text-cream-soda font-mono text-3xl tracking-wider flex items-center">
 							{name || (
@@ -139,57 +150,59 @@ export default function PostGameOverlay({
 						</div>
 					</div>
 
-					<div className="mt-6 flex flex-col gap-4 w-full max-w-5xl mx-auto">
-						{KEY_ROWS.map((row, idx) => (
-							<div
-								key={idx}
-								className="flex flex-wrap gap-4 justify-center items-center"
-							>
-								{row.map((ch) => (
-									<button
-										key={ch}
-										type="button"
-										ref={bindButtonRef(`key-${ch}`)}
-										onClick={() => appendChar(ch)}
-										className={`
-                      beat-menu-option text-cream-soda px-6 py-4 rounded-xl font-mono text-3xl min-w-[5.4rem]
-                      ${hoveredButtonId === `key-${ch}` ? 'is-selected' : ''}
+					<div className="mt-6 flex flex-col gap-5 w-full max-w-5xl mx-auto">
+						<div className="grid grid-cols-5 gap-3 md:gap-4">
+							{Array.from({ length: MAX_NAME_LEN }, (_, idx) => (
+								<div
+									key={`slot-${idx}`}
+									className="rounded-xl border border-cream-soda/40 bg-black/25 p-2 md:p-3 flex flex-col items-center gap-2"
+								>
+										<button
+											type="button"
+											ref={bindButtonRef(`slot-${idx}-up`)}
+											onClick={() => cycleSlot(idx, 1)}
+											className={`
+                      beat-menu-option w-full min-h-[88px] text-cream-soda px-2 py-5 md:py-6 rounded-xl font-mono text-5xl md:text-6xl leading-none
+                      ${hoveredButtonId === `slot-${idx}-up` ? 'is-selected' : ''}
                     `}
-									>
-										{ch}
+										>
+										▲
 									</button>
-								))}
-							</div>
-						))}
-						<div className="flex flex-wrap gap-4 pt-3 justify-center items-center">
-							<button
-								type="button"
-								ref={bindButtonRef('key-space')}
-								onClick={() => appendChar(' ')}
-								className={`
-                  beat-menu-option text-cream-soda px-7 py-4 rounded-xl font-mono text-2xl min-w-[11rem]
-                  ${hoveredButtonId === 'key-space' ? 'is-selected' : ''}
-                `}
-							>
-								SPACE
-							</button>
+									<div className="w-full min-h-[72px] rounded-lg border border-cream-soda/45 bg-gradient-to-r from-[#ff4fa3]/16 to-[#ffb43b]/18 flex items-center justify-center text-cream-soda font-mono text-5xl md:text-6xl leading-none">
+										{nameSlots[idx] || '·'}
+									</div>
+										<button
+											type="button"
+											ref={bindButtonRef(`slot-${idx}-down`)}
+											onClick={() => cycleSlot(idx, -1)}
+											className={`
+                      beat-menu-option w-full min-h-[88px] text-cream-soda px-2 py-5 md:py-6 rounded-xl font-mono text-5xl md:text-6xl leading-none
+                      ${hoveredButtonId === `slot-${idx}-down` ? 'is-selected' : ''}
+                    `}
+										>
+										▼
+									</button>
+								</div>
+							))}
+						</div>
+						<div className="flex flex-wrap gap-5 pt-2 justify-center items-center">
 							<button
 								type="button"
 								ref={bindButtonRef('key-delete')}
 								onClick={backspace}
 								className={`
-                  beat-menu-option text-cream-soda px-7 py-4 rounded-xl font-mono text-2xl min-w-[11rem]
+                  beat-menu-option text-cream-soda px-8 py-5 rounded-xl font-mono text-3xl min-w-[13rem]
                   ${hoveredButtonId === 'key-delete' ? 'is-selected' : ''}
                 `}
 							>
-								DELETE
+								BACK
 							</button>
 							<button
 								type="button"
 								ref={bindButtonRef('key-clear')}
 								onClick={clear}
 								className={`
-                  beat-menu-option text-cream-soda px-7 py-4 rounded-xl font-mono text-2xl min-w-[11rem]
+                  beat-menu-option text-cream-soda px-8 py-5 rounded-xl font-mono text-3xl min-w-[13rem]
                   ${hoveredButtonId === 'key-clear' ? 'is-selected' : ''}
                 `}
 							>
@@ -201,7 +214,7 @@ export default function PostGameOverlay({
 								ref={bindButtonRef('key-save')}
 								onClick={() => canSubmit && onSubmit(name.trim())}
 								className={`
-                  beat-menu-start rounded-xl px-9 py-4 font-mono text-2xl font-bold uppercase min-w-[14rem]
+                  beat-menu-start rounded-xl px-10 py-5 font-mono text-3xl font-bold uppercase min-w-[16rem]
                   ${canSubmit ? 'is-ready text-cream-soda cursor-pointer !bg-fuchsia-600 hover:!bg-fuchsia-500 !border-fuchsia-300' : 'is-disabled text-cream-soda/70 cursor-not-allowed !bg-fuchsia-900/40'}
                   ${hoveredButtonId === 'key-save' ? ' is-selected' : ''}
                 `}

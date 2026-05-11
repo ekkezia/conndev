@@ -9,7 +9,7 @@
 
 // ================= UDP =================
 WiFiUDP udp;
-IPAddress serverIp(10, 23, 10, 50);   // updated computer/server IP
+IPAddress serverIp;
 const unsigned int serverUdpPort = 4210;
 const unsigned int localUdpPort  = 4211; // listens for feedback
 char incomingPacket[160];
@@ -283,10 +283,25 @@ void checkUdpFeedback() {
 }
 
 bool connectToNetwork() {
+  if (WiFi.status() == WL_NO_MODULE) {
+    Serial.println("WiFi module not detected (WL_NO_MODULE).");
+    return false;
+  }
+
+  if (strlen(SECRET_SSID) == 0) {
+    Serial.println("SECRET_SSID is empty in arduino_secrets.h");
+    return false;
+  }
+
+  Serial.print("Connecting to SSID: ");
+  Serial.println(SECRET_SSID);
+
   int attempts = 0;
   WiFi.begin(SECRET_SSID, SECRET_PASS);
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    Serial.println("WiFi intentando...");
+    int st = WiFi.status();
+    Serial.print("WiFi intentando... status=");
+    Serial.println(st);
     delay(1000);
     attempts++;
   }
@@ -320,6 +335,19 @@ void setup() {
       delay(120);
     }
   }
+
+  if (!serverIp.fromString(SERVER_IP_ADDRESS)) {
+    Serial.print("Invalid SERVER_IP_ADDRESS in arduino_secrets.h: ");
+    Serial.println(SERVER_IP_ADDRESS);
+    while (true) {
+      setStatusPixel(rgb(180, 0, 0));
+      delay(200);
+      clearStatusPixel();
+      delay(200);
+    }
+  }
+  Serial.print("UDP server IP: ");
+  Serial.println(serverIp);
 
   udp.begin(localUdpPort);
   Serial.print("Arduino UDP listening on port ");

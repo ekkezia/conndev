@@ -6,7 +6,6 @@ import WandCursorSVG from "./wand-cursor-svg";
 
 const STAR_TRACE_HIT_RADIUS = 70;
 const TRACE_POINTS_PER_SEGMENT = 24;
-const TRACE_RING_SIZE = 112;
 
 function createTraceControlPoints(rect) {
   const cx = rect.x + rect.width / 2;
@@ -59,12 +58,14 @@ export default function StarTraceScreen({
   canvasRect,
   onComplete,
   onPerfectTraceHit,
-  sensitivityValue = null,
+  onSkip,
   isDrawActive = true,
 }) {
   const [hitCount, setHitCount] = useState(0);
+  const [skipHovered, setSkipHovered] = useState(false);
   const hitRef = useRef(0);
   const doneRef = useRef(false);
+  const skipButtonRef = useRef(null);
   const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } = useWandCursor(cursor, canvasRect);
 
   const tracePoints = useMemo(() => {
@@ -85,6 +86,20 @@ export default function StarTraceScreen({
     }
     return { x: (minX + maxX) / 2, y: maxY + 46 };
   }, [tracePoints]);
+  const traceCenterPos = useMemo(() => {
+    if (!tracePoints.length) return null;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const pt of tracePoints) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  }, [tracePoints]);
 
   useEffect(() => {
     if (!activeCursor || doneRef.current || hitRef.current >= dots.length) return;
@@ -101,6 +116,25 @@ export default function StarTraceScreen({
       }
     }
   }, [activeCursor, dots, onComplete, onPerfectTraceHit]);
+
+  useEffect(() => {
+    if (!activeCursor) {
+      setSkipHovered(false);
+      return;
+    }
+    const el = skipButtonRef.current;
+    if (!el) {
+      setSkipHovered(false);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const inside =
+      activeCursor.x >= rect.left &&
+      activeCursor.x <= rect.right &&
+      activeCursor.y >= rect.top &&
+      activeCursor.y <= rect.bottom;
+    setSkipHovered(inside);
+  }, [activeCursor]);
 
   return (
     <div
@@ -156,39 +190,31 @@ export default function StarTraceScreen({
             transform: "translateX(-50%)",
           }}
         >
-          <p className="text-white/70 font-mono text-lg tracking-widest uppercase">
+          <p className="text-white/70 font-mono text-3xl tracking-widest uppercase">
             TRACE THE STAR!
           </p>
         </div>
       )}
-      <div className="absolute top-4 right-4 pointer-events-none z-10">
-        <svg width={TRACE_RING_SIZE} height={TRACE_RING_SIZE} viewBox="0 0 120 120">
-          <defs>
-            <linearGradient id="traceRingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#ff2457" />
-              <stop offset="100%" stopColor="#b02dff" />
-            </linearGradient>
-          </defs>
-          <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="12" />
-          <circle
-            cx="60"
-            cy="60"
-            r="46"
-            fill="none"
-            stroke="url(#traceRingGradient)"
-            strokeWidth="12"
-            strokeLinecap="round"
-            strokeDasharray="248 70"
-            transform="rotate(-90 60 60)"
-          />
-          <text x="60" y="68" textAnchor="middle" fontSize="30" fontWeight="700" fill="rgba(255,255,255,0.96)">
-            {Number.isFinite(Number(sensitivityValue)) ? Number(sensitivityValue).toFixed(1) : "--"}
-          </text>
-          <text x="60" y="26" textAnchor="middle" fontSize="10" fontWeight="700" fill="rgba(255,255,255,0.96)" letterSpacing="1.2">
-            SENSITIVITY
-          </text>
-        </svg>
-      </div>
+      {traceCenterPos && (
+        <button
+          ref={skipButtonRef}
+          type="button"
+          onClick={() => onSkip?.()}
+          data-clickable="true"
+          className={`
+            absolute beat-menu-option text-cream-soda rounded-xl px-7 py-3 font-mono text-xl font-bold uppercase
+            ${skipHovered ? "!border-cream-soda/95" : ""}
+          `}
+          style={{
+            left: traceCenterPos.x,
+            top: traceCenterPos.y,
+            transform: "translate(-50%, -50%)",
+            background: 'rgba(255, 135, 79, 0.75)',
+          }}
+        >
+          SKIP PRACTICE
+        </button>
+      )}
     </div>
   );
 }

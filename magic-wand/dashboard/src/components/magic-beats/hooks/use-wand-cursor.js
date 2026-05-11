@@ -5,17 +5,23 @@ import { TRAIL_LIFETIME, TRAIL_PALETTE } from "../constants";
 
 const DESKTOP_MOUSE_TAKEOVER_MS = 220;
 
-export function useWandCursor(cursor, canvasRect) {
+export function useWandCursor(
+  cursor,
+  canvasRect,
+  { enableTrail = true, smoothWandCursor = false, smoothFactor = 0.22 } = {},
+) {
   const [mousePos, setMousePos] = useState(null);
   const [clickKey, setClickKey] = useState(0);
   const [trailItems, setTrailItems] = useState([]);
+  const [smoothedCursor, setSmoothedCursor] = useState(null);
   const trailRef = useRef([]);
   const lastTrailPosRef = useRef(null);
   const trailFrameRef = useRef(0);
   const cursorRef = useRef(null);
+  const smoothCursorRef = useRef(null);
   const mouseTakeoverTimeoutRef = useRef(null);
   // Desktop mouse takes priority when it moves; wand is fallback.
-  const activeCursor = mousePos ?? cursor;
+  const activeCursor = mousePos ?? (smoothWandCursor ? smoothedCursor : cursor);
 
   useEffect(() => {
     cursorRef.current = activeCursor;
@@ -29,6 +35,45 @@ export function useWandCursor(cursor, canvasRect) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!smoothWandCursor) {
+      setSmoothedCursor(cursor ?? null);
+      smoothCursorRef.current = cursor ?? null;
+      return undefined;
+    }
+
+    let rafId;
+    const loop = () => {
+      rafId = requestAnimationFrame(loop);
+      const target = cursor;
+      if (!target) {
+        if (smoothCursorRef.current !== null) {
+          smoothCursorRef.current = null;
+          setSmoothedCursor(null);
+        }
+        return;
+      }
+
+      const prev = smoothCursorRef.current;
+      if (!prev) {
+        const seeded = { x: target.x, y: target.y };
+        smoothCursorRef.current = seeded;
+        setSmoothedCursor(seeded);
+        return;
+      }
+
+      const next = {
+        x: prev.x + (target.x - prev.x) * smoothFactor,
+        y: prev.y + (target.y - prev.y) * smoothFactor,
+      };
+      smoothCursorRef.current = next;
+      setSmoothedCursor(next);
+    };
+
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, [cursor, smoothWandCursor, smoothFactor]);
 
   useEffect(() => {
     const onImuClick = (event) => {
@@ -63,6 +108,12 @@ export function useWandCursor(cursor, canvasRect) {
   }, []);
 
   useEffect(() => {
+    if (!enableTrail) {
+      trailRef.current = [];
+      setTrailItems([]);
+      lastTrailPosRef.current = null;
+      return undefined;
+    }
     let rafId;
     function loop(now) {
       rafId = requestAnimationFrame(loop);
@@ -91,7 +142,7 @@ export function useWandCursor(cursor, canvasRect) {
     }
     rafId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafId);
-  }, []);
+  }, [enableTrail]);
 
   const onMouseMove = useCallback(
     (e) => {
