@@ -1,5 +1,75 @@
 [
   {
+    "title": "Foreplay - Tu Angel",
+    "artist": "EZETA",
+    "src": "/music/foreplay.wav",
+    "bpm": 160,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
+    "title": "Call of Duty",
+    "artist": "DJ KIM",
+    "src": "/music/callofduty.wav",
+    "bpm": 84,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
+    "title": "Don't Want Me",
+    "artist": "RaFia",
+    "src": "/music/dontwantme.mp3",
+    "bpm": 120,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
+    "title": "Shower",
+    "artist": "DJ KIM",
+    "src": "/music/shower.wav",
+    "bpm": 74,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
+    "title": "NewITPIdea",
+    "artist": "Ivan Abogado",
+    "src": "/music/newitpidea.mp3",
+    "bpm": 100,
+    "location": {
+      "lat": 40.7576,
+      "lng": -73.9859
+    }
+  },
+  {
+    "title": "Winter Wonderland",
+    "artist": "DJ KIM",
+    "src": "/music/winterwonderland.wav",
+    "bpm": 80,
+    "location": {
+      "lat": 40.6936,
+      "lng": -73.9868
+    }
+  },
+  {
+    "title": "Dear Yamaguchi",
+    "artist": "Qihan Christoff Jiang",
+    "src": "/music/dearyamaguchi.mp3",
+    "bpm": 100,
+    "location": {
+      "lat": 19.4328,
+      "lng": -99.1334
+    }
+  },
+  {
     "title": "My First Partner",
     "artist": "Prisha Jain",
     "src": "/music/myfirstpartner.wav",
@@ -67,46 +137,6 @@
     "location": {
       "lat": 19.4328,
       "lng": -99.1334
-    }
-  },
-  {
-    "title": "Don't Want Me",
-    "artist": "RaFia",
-    "src": "/music/dontwantme.mp3",
-    "bpm": 120,
-    "location": {
-      "lat": 40.6936,
-      "lng": -73.9868
-    }
-  },
-  {
-    "title": "Dear Yamaguchi",
-    "artist": "Qihan Christoff Jiang",
-    "src": "/music/dearyamaguchi.mp3",
-    "bpm": 100,
-    "location": {
-      "lat": 19.4328,
-      "lng": -99.1334
-    }
-  },
-  {
-    "title": "NewITPIdea",
-    "artist": "Ivan Abogado",
-    "src": "/music/newitpidea.mp3",
-    "bpm": 100,
-    "location": {
-      "lat": 40.7576,
-      "lng": -73.9859
-    }
-  },
-  {
-    "title": "Invitation",
-    "artist": "Roy Hargrove",
-    "src": "/music/invitation.mp3",
-    "bpm": 95,
-    "location": {
-      "lat": 40.6936,
-      "lng": -73.9868
     }
   }
 ]
