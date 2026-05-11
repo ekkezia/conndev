@@ -147,7 +147,7 @@ export default function SongSelectOverlay({
       onMouseLeave={onMouseLeave}
       onClick={triggerClick}
     >
-      <svg className="absolute inset-0 w-full h-full overflow-visible pointer-events-none">
+      <svg className="absolute inset-0 z-[140] w-full h-full overflow-visible pointer-events-none">
         <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} isDrawActive={isDrawActive} />
       </svg>
       <div className="w-full max-w-2xl px-6">
@@ -230,14 +230,15 @@ export default function SongSelectOverlay({
       </div>
 
       <div className="fixed bottom-4 left-5 z-[80] pointer-events-none text-left">
-        <p className="text-cream-soda/90 font-mono text-[10px] md:text-xs uppercase tracking-wider mb-1 max-w-[240px]">
-          CLICK DRAW BUTTON TO TOGGLE BETWEEN TRAX LIST AND PRODIGY LIST
-        </p>
+        
         <img
           src="/images/magic-wand-draw.png"
           alt="Magic wand draw button"
-          className="w-28 md:w-36 rounded-lg border border-cream-soda/45 shadow-lg object-cover"
+          className="w-28 md:w-36 object-cover"
         />
+        <p className="text-cream-soda/90 font-mono text-[10px] md:text-xs uppercase tracking-wider mb-1 max-w-[240px]">
+          CLICK DRAW BUTTON TO TOGGLE BETWEEN TRAX LIST AND PRODIGY LIST
+        </p>
       </div>
     </div>
   );

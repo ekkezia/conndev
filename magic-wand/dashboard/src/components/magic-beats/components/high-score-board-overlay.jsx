@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWandCursor } from "../hooks/use-wand-cursor";
 import WandCursorSVG from "./wand-cursor-svg";
 
@@ -23,6 +23,9 @@ export default function HighScoreBoardOverlay({
   isDrawActive = true,
 }) {
   const listScrollRef = useRef(null);
+  const scrollUpRef = useRef(null);
+  const scrollDownRef = useRef(null);
+  const [hoveredControlId, setHoveredControlId] = useState(null);
   const { activeCursor, trailItems, onMouseMove, onMouseLeave, clickKey, triggerClick } =
     useWandCursor(cursor, canvasRect);
   const items = useMemo(() => {
@@ -48,6 +51,32 @@ export default function HighScoreBoardOverlay({
     el.scrollBy({ top: delta, behavior: "auto" });
   }, []);
 
+  useEffect(() => {
+    if (!activeCursor) {
+      setHoveredControlId(null);
+      return;
+    }
+    let hoveredControl = null;
+    const controls = [
+      ["scroll-up", scrollUpRef.current],
+      ["scroll-down", scrollDownRef.current],
+    ];
+    for (const [id, el] of controls) {
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const inside =
+        activeCursor.x >= rect.left &&
+        activeCursor.x <= rect.right &&
+        activeCursor.y >= rect.top &&
+        activeCursor.y <= rect.bottom;
+      if (inside) {
+        hoveredControl = id;
+        break;
+      }
+    }
+    setHoveredControlId(hoveredControl);
+  }, [activeCursor]);
+
   return (
     <div
       className="absolute inset-0 z-50 flex items-center justify-center bg-cola-brown/74 backdrop-blur-md"
@@ -64,7 +93,7 @@ export default function HighScoreBoardOverlay({
         />
       </svg>
       <div className="w-full max-w-5xl px-6">
-        <div className="relative pointer-events-auto rounded-2xl border border-cream-soda/35 bg-gradient-to-br from-[#ff4fa3]/35 via-[#ff8a86]/35 to-[#ffb43b]/80 p-6 shadow-2xl"
+        <div className="relative pointer-events-auto rounded-2xl border border-cream-soda/35 bg-gradient-to-br from-[#ff4fa3]/35 via-[#ff8a86]/35 to-[#ffb43b]/80 p-6 shadow-2xl overflow-hidden isolate"
           style={{
             background: 'linear-gradient(135deg, rgba(82, 6, 43, 0.5) 0%, rgba(255,138,134,0.5) 50%, rgba(255,180,59,0.5) 100%)',
           }}
@@ -84,13 +113,14 @@ export default function HighScoreBoardOverlay({
             <div className="mt-4 flex items-stretch gap-3">
               <div
                 ref={listScrollRef}
-                className="flex-1 max-h-[52vh] overflow-y-auto pr-1 rounded-2xl bg-gradient-to-r from-[#ff4fa3]/22 via-[#ff8a86]/18 to-[#ffb43b]/24 p-2"
+                className="relative isolate flex-1 max-h-[52vh] overflow-y-auto overscroll-contain pr-1 rounded-2xl bg-gradient-to-r from-[#ff4fa3]/22 via-[#ff8a86]/18 to-[#ffb43b]/24 p-2 [transform:translateZ(0)]"
+                style={{ contain: "paint" }}
               >
                 <div className="flex flex-col gap-2">
                   {items.map((row) => (
                     <div
                       key={row.id}
-                      className="border-b border-cream-soda/40 bg-gradient-to-r from-[#ff4fa3]/24 via-[#ff8a86]/18 to-[#ffb43b]/26 px-4 py-1 flex items-center justify-between gap-4"
+                      className="relative z-0 border-b border-cream-soda/40 bg-gradient-to-r from-[#ff4fa3]/24 via-[#ff8a86]/18 to-[#ffb43b]/26 px-4 py-1 flex items-center justify-between gap-4"
                     >
                       <div className="min-w-0">
                         <p className="text-cream-soda font-mono text-2xl leading-tight truncate">
@@ -110,16 +140,24 @@ export default function HighScoreBoardOverlay({
               <div className="w-20 max-h-[52vh] rounded-2xl border border-cream-soda/35 bg-black/35 p-2.5 flex flex-col items-stretch">
                 <button
                   type="button"
+                  ref={scrollUpRef}
                   onClick={() => scrollListBy(-180)}
-                  className="beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center"
+                  className={`
+                    beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center
+                    ${hoveredControlId === "scroll-up" ? "imu-hover-target is-selected" : ""}
+                  `}
                   data-clickable="true"
                 >
                   ▲
                 </button>
                 <button
                   type="button"
+                  ref={scrollDownRef}
                   onClick={() => scrollListBy(180)}
-                  className="beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center mt-2.5"
+                  className={`
+                    beat-menu-option w-full flex-1 rounded-lg font-mono text-2xl text-cream-soda flex items-center justify-center mt-2.5
+                    ${hoveredControlId === "scroll-down" ? "imu-hover-target is-selected" : ""}
+                  `}
                   data-clickable="true"
                 >
                   ▼
@@ -129,25 +167,27 @@ export default function HighScoreBoardOverlay({
           )}
 
           <div className="fixed bottom-4 right-5 pointer-events-none text-right">
-            <p className="text-cream-soda/90 font-mono text-[10px] md:text-xs uppercase tracking-wider mb-1 max-w-[200px]">
-              FLIP THE WAND TO THE BACK AND FRONT FOR TUTORIAL
-            </p>
+  
             <img
               src="/images/magic-wand-tutorial.png"
               alt="Magic wand tutorial"
-              className="ml-auto w-32 md:w-40 rounded-lg border border-cream-soda/45 shadow-lg object-cover"
+              className="ml-auto w-32 md:w-40 object-cover"
             />
+            <p className="text-cream-soda/90 font-mono text-[10px] md:text-xs uppercase tracking-wider mb-1 max-w-[200px]">
+              FLIP THE WAND TO THE BACK AND FRONT FOR TUTORIAL
+            </p>
           </div>
 
           <div className="fixed bottom-4 left-5 pointer-events-none text-left">
-            <p className="text-cream-soda/90 font-mono text-[10px] md:text-xs uppercase tracking-wider mb-1 max-w-[200px]">
-              CLICK DRAW BUTTON TO TOGGLE BETWEEN TRAX LIST AND PRODIGY LIST
-            </p>
+            
             <img
               src="/images/magic-wand-draw.png"
               alt="Magic wand draw button"
-              className="w-28 md:w-36 rounded-lg border border-cream-soda/45 shadow-lg object-cover"
+              className="w-28 md:w-36 object-cover"
             />
+            <p className="text-cream-soda/90 font-mono text-[10px] md:text-xs uppercase tracking-wider mb-1 max-w-[200px]">
+              CLICK DRAW BUTTON TO TOGGLE BETWEEN TRAX LIST AND PRODIGY LIST
+            </p>
           </div>
         </div>
       </div>
