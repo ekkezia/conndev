@@ -28,7 +28,7 @@ if (serveDashboard) {
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
 // Problem: the Render server is super slow and laggy
-const IS_LOCAL = true;
+const IS_LOCAL = false;
 console.log(
   `🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`,
 );
@@ -88,9 +88,13 @@ function applyDrawState(nextDraw, source = 'udp-draw') {
   console.log(`✍🏻 Draw: ${nextDraw} (${source})`);
 
   if (nextDraw === 'start' && currentSessionIndex === null) {
-    startNewSession();
-  } else if (nextDraw === 'stop' && currentSessionIndex !== null) {
-    endSession();
+    startNewSession('draw', { source });
+  } else if (
+    nextDraw === 'stop' &&
+    currentSessionIndex !== null &&
+    currentSessionReason === 'draw'
+  ) {
+    endSession('draw-stop', { source });
   }
 
   return true;
@@ -101,9 +105,21 @@ function applyDrawState(nextDraw, source = 'udp-draw') {
 // ===============================
 let currentSessionIndex = null;
 let sessionStartTimestamp = null;
+let currentSessionReason = null; // 'draw' | 'song' | null
+let currentSongSessionId = null;
 
-async function startNewSession() {
-  console.log('start a new session');
+async function startNewSession(reason = 'draw', meta = {}) {
+  console.log(`start a new session (${reason})`);
+  if (currentSessionIndex !== null) {
+    if (reason === 'song') {
+      // Rotate into a dedicated session for the newly started song.
+      await endSession('song-rotate', { rotatedBy: meta?.sessionId ?? null });
+    } else {
+      // Ignore draw-based starts while a song session is active.
+      if (currentSessionReason === 'song') return;
+      return;
+    }
+  }
   try {
     let sessions = [];
     let newSession;
@@ -126,6 +142,12 @@ async function startNewSession() {
       newSession = {
         id: `session_${currentSessionIndex + 1}`,
         startTimestamp: sessionStartTimestamp,
+        reason,
+        songSessionId: meta?.sessionId ?? null,
+        songTitle: meta?.songTitle ?? null,
+        songArtist: meta?.songArtist ?? null,
+        songSrc: meta?.songSrc ?? null,
+        songBpm: Number.isFinite(Number(meta?.songBpm)) ? Number(meta.songBpm) : null,
         data: {},
       };
 
@@ -141,6 +163,12 @@ async function startNewSession() {
       newSession = {
         id: `session_local_${sessionStartTimestamp}`,
         startTimestamp: sessionStartTimestamp,
+        reason,
+        songSessionId: meta?.sessionId ?? null,
+        songTitle: meta?.songTitle ?? null,
+        songArtist: meta?.songArtist ?? null,
+        songSrc: meta?.songSrc ?? null,
+        songBpm: Number.isFinite(Number(meta?.songBpm)) ? Number(meta.songBpm) : null,
         data: {},
       };
       console.log(
@@ -151,13 +179,15 @@ async function startNewSession() {
     if (typeof io !== 'undefined') {
       io.emit('session-started', { ...newSession, data: [] });
     }
+    currentSessionReason = reason;
+    currentSongSessionId = reason === 'song' ? meta?.sessionId ?? null : null;
   } catch (err) {
     console.error('startNewSession error:', err.message);
   }
 }
 
-async function endSession() {
-  console.log('end session');
+async function endSession(endReason = 'manual', meta = {}) {
+  console.log(`end session (${endReason})`);
   if (currentSessionIndex !== null) {
     try {
       const endTimestamp = Date.now();
@@ -177,6 +207,8 @@ async function endSession() {
 
         if (sessions[currentSessionIndex]) {
           sessions[currentSessionIndex].endTimestamp = endTimestamp;
+          sessions[currentSessionIndex].endReason = endReason;
+          sessions[currentSessionIndex].songSessionEndReason = meta?.songEndReason ?? null;
           await set(ref(db, 'sessions'), sessions);
           console.log(
             `📁 Firebase session ended: ${sessions[currentSessionIndex].id}`,
@@ -187,7 +219,12 @@ async function endSession() {
       }
 
       if (typeof io !== 'undefined') {
-        io.emit('session-ended', { index: currentSessionIndex, endTimestamp });
+        io.emit('session-ended', {
+          index: currentSessionIndex,
+          endTimestamp,
+          endReason,
+          songSessionId: currentSongSessionId,
+        });
       }
     } catch (err) {
       console.error('endSession error:', err.message);
@@ -195,6 +232,8 @@ async function endSession() {
   }
   currentSessionIndex = null;
   sessionStartTimestamp = null;
+  currentSessionReason = null;
+  currentSongSessionId = null;
 }
 
 // ===============================
@@ -600,6 +639,40 @@ io.on('connection', async (socket) => {
 
   socket.on('ui-click', () => {
     sendArduinoFeedbackMessage('click', 'ui-click');
+  });
+
+  socket.on('beat-song-session-start', async (payload = {}) => {
+    try {
+      const sessionId =
+        typeof payload?.sessionId === 'string' && payload.sessionId.trim()
+          ? payload.sessionId.trim()
+          : `song-${Date.now()}`;
+      await startNewSession('song', {
+        sessionId,
+        songTitle: payload?.songTitle ?? null,
+        songArtist: payload?.songArtist ?? null,
+        songSrc: payload?.songSrc ?? null,
+        songBpm: payload?.songBpm ?? null,
+      });
+    } catch (err) {
+      console.error('beat-song-session-start error:', err.message);
+    }
+  });
+
+  socket.on('beat-song-session-end', async (payload = {}) => {
+    try {
+      const requestedSessionId =
+        typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : null;
+      if (currentSessionReason !== 'song') return;
+      if (requestedSessionId && currentSongSessionId && requestedSessionId !== currentSongSessionId) {
+        return;
+      }
+      await endSession('song-end', {
+        songEndReason: payload?.reason ?? 'song-ended',
+      });
+    } catch (err) {
+      console.error('beat-song-session-end error:', err.message);
+    }
   });
 
   socket.on('hue-control', (data) => {

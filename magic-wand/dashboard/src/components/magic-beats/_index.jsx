@@ -258,6 +258,7 @@ export default function BeatGame({ className }) {
   const cursorBezierRef = useRef(null);
   const cursorClickTimeRef = useRef(-Infinity);
   const cursorSmoothRef = useRef(null); // EMA-filtered sensor position
+  const activeSongSessionRef = useRef(null);
 
   const isDrawActive = (() => {
     if (typeof drawState?.draw === "boolean") return drawState.draw;
@@ -272,6 +273,31 @@ export default function BeatGame({ className }) {
     // After first completion, only allow reopening when wand draw is OFF and gameplay is idle.
     return !isDrawActive && !activeSong && !pendingResult;
   }, [instructionCompleted, isDrawActive, activeSong, pendingResult]);
+
+  const startSongDataSession = useCallback((song) => {
+    if (!song) return;
+    const sessionId = `song-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    activeSongSessionRef.current = { sessionId, songSrc: song.src };
+    socketRef.current?.emit("beat-song-session-start", {
+      sessionId,
+      songTitle: song.title ?? null,
+      songArtist: song.artist ?? null,
+      songSrc: song.src ?? null,
+      songBpm: song.bpm ?? null,
+      startedAt: Date.now(),
+    });
+  }, []);
+
+  const endSongDataSession = useCallback((reason = "song-ended") => {
+    const active = activeSongSessionRef.current;
+    if (!active) return;
+    socketRef.current?.emit("beat-song-session-end", {
+      sessionId: active.sessionId,
+      reason,
+      endedAt: Date.now(),
+    });
+    activeSongSessionRef.current = null;
+  }, []);
 
   useEffect(() => {
     isDrawActiveRef.current = isDrawActive;
@@ -300,10 +326,11 @@ export default function BeatGame({ className }) {
     if (audioRef.current) {
       audioRef.current.pause();
     }
+    endSongDataSession("stop-to-menu");
     setPendingResult(null);
     setActiveSong(null);
     setForceSongMenu(false);
-  }, []);
+  }, [endSongDataSession]);
 
   useEffect(() => {
     const wasOn = prevDrawStopPromptRef.current;
@@ -865,12 +892,14 @@ export default function BeatGame({ className }) {
     cursorDotRef.current = null;
     setScore(0);
     scoreRef.current = 0;
+    startSongDataSession(activeSong);
 
     const audio = new Audio(activeSong.src);
     audio.volume = 0.8;
     audio.loop = false;
     audio.play().catch((err) => console.warn('Audio play failed:', err));
     const handleSongEnded = () => {
+      endSongDataSession("audio-ended");
       setPendingResult({
         song: activeSong,
         score: scoreRef.current,
@@ -1128,6 +1157,7 @@ export default function BeatGame({ className }) {
     gameRafRef.current = requestAnimationFrame(gameLoop);
 
     return () => {
+      endSongDataSession("effect-cleanup");
       running = false;
       if (gameRafRef.current) { cancelAnimationFrame(gameRafRef.current); gameRafRef.current = null; }
       audio.removeEventListener("ended", handleSongEnded);
@@ -1146,7 +1176,15 @@ export default function BeatGame({ className }) {
       trailStateRef.current = 'normal';
       trailFeedbackRef.current = { type: "normal", remaining: 0, index: 0 };
     };
-  }, [activeSong, setCursorDotScale, triggerHitFeedback, startTrailFeedback, addScore]);
+  }, [
+    activeSong,
+    startSongDataSession,
+    endSongDataSession,
+    setCursorDotScale,
+    triggerHitFeedback,
+    startTrailFeedback,
+    addScore,
+  ]);
 
   // ─── CURSOR TARGET from sensor data ───────────────────────────────────────
   useEffect(() => {
@@ -1344,7 +1382,10 @@ export default function BeatGame({ className }) {
           <span className="text-pink-doll font-bold tabular-nums pointer-events-none">{score} pts</span>
           <button
             type="button"
-            onClick={() => setActiveSong(null)}
+            onClick={() => {
+              endSongDataSession("manual-back-menu");
+              setActiveSong(null);
+            }}
             className="text-cream-soda/50 hover:text-cream-soda transition ml-1 leading-none"
             title="Back to menu"
           >↩</button>
