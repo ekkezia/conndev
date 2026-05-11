@@ -29,8 +29,13 @@ if (serveDashboard) {
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
 // Problem: the Render server is super slow and laggy
 const IS_LOCAL = false;
+const START_SESSIONS_ON_DRAW =
+  String(process.env.START_SESSIONS_ON_DRAW ?? 'false').toLowerCase() === 'true';
 console.log(
   `🏠 Server mode: ${IS_LOCAL ? 'LOCAL (Firebase writes disabled)' : 'REMOTE (Firebase writes enabled)'}`,
+);
+console.log(
+  `📝 Draw-triggered sessions: ${START_SESSIONS_ON_DRAW ? 'enabled' : 'disabled (song-only sessions)'}`,
 );
 
 let mouseEnabled = false;
@@ -87,7 +92,11 @@ function applyDrawState(nextDraw, source = 'udp-draw') {
   io.emit('sensor-draw', { draw: nextDraw, timestamp: Date.now() });
   console.log(`✍🏻 Draw: ${nextDraw} (${source})`);
 
-  if (nextDraw === 'start' && currentSessionIndex === null) {
+  if (
+    START_SESSIONS_ON_DRAW &&
+    nextDraw === 'start' &&
+    currentSessionIndex === null
+  ) {
     startNewSession('draw', { source });
   } else if (
     nextDraw === 'stop' &&
