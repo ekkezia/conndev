@@ -28,7 +28,7 @@ if (serveDashboard) {
 // Auto-detect local vs remote based on REACT_APP_SERVER_URL
 // const IS_LOCAL = process.env.REACT_APP_SERVER_URL?.includes('localhost') ?? false;
 // Problem: the Render server is super slow and laggy
-const IS_LOCAL = false;
+const IS_LOCAL = true;
 const START_SESSIONS_ON_DRAW =
   String(process.env.START_SESSIONS_ON_DRAW ?? 'false').toLowerCase() === 'true';
 console.log(

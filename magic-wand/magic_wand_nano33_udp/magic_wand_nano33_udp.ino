@@ -58,6 +58,9 @@ int sensitivity = 5;
 const String deviceName = "kezia-nano33";
 bool imuReady = false;
 
+// ================= FAST SWING EFFECT =================
+const float SWING_THRESHOLD = 150.0; // adjust experimentally
+
 // ================= HAPTICS =================
 Adafruit_DRV2605 drv;
 
@@ -285,33 +288,71 @@ void checkUdpFeedback() {
 bool connectToNetwork() {
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("WiFi module not detected (WL_NO_MODULE).");
-    return false;
+
+    while (true) {
+      setStatusPixel(rgb(180, 0, 0)); // red
+      delay(150);
+      clearStatusPixel();
+      delay(150);
+    }
   }
 
   if (strlen(SECRET_SSID) == 0) {
     Serial.println("SECRET_SSID is empty in arduino_secrets.h");
-    return false;
+
+    while (true) {
+      setStatusPixel(rgb(180, 0, 0)); // red
+      delay(150);
+      clearStatusPixel();
+      delay(150);
+    }
   }
 
   Serial.print("Connecting to SSID: ");
   Serial.println(SECRET_SSID);
 
-  int attempts = 0;
   WiFi.begin(SECRET_SSID, SECRET_PASS);
+
+  int attempts = 0;
+
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    int st = WiFi.status();
+
+    // BLUE BLINK while connecting
+    setStatusPixel(rgb(0, 0, 180));
+    delay(120);
+    clearStatusPixel();
+    delay(120);
+
     Serial.print("WiFi intentando... status=");
-    Serial.println(st);
-    delay(1000);
+    Serial.println(WiFi.status());
+
     attempts++;
   }
+
   if (WiFi.status() == WL_CONNECTED) {
+
     Serial.println("WiFi OK");
     Serial.print("Arduino IP: ");
     Serial.println(WiFi.localIP());
+
+    // GREEN BLINK ONCE when connected
+    setStatusPixel(rgb(0, 180, 0));
+    delay(400);
+    clearStatusPixel();
+
     return true;
   }
+
   Serial.println("WiFi FALLO");
+
+  // RED BLINK FOREVER on failure
+  while (true) {
+    setStatusPixel(rgb(180, 0, 0));
+    delay(150);
+    clearStatusPixel();
+    delay(150);
+  }
+
   return false;
 }
 
@@ -327,14 +368,7 @@ void setup() {
   pixels.setBrightness(PIXEL_BRIGHTNESS);
   clearPixels();
 
-  if (!connectToNetwork()) {
-    while (true) {
-      setStatusPixel(rgb(180, 0, 0));
-      delay(120);
-      clearStatusPixel();
-      delay(120);
-    }
-  }
+  connectToNetwork();
 
   if (!serverIp.fromString(SERVER_IP_ADDRESS)) {
     Serial.print("Invalid SERVER_IP_ADDRESS in arduino_secrets.h: ");
@@ -426,9 +460,24 @@ void loop() {
   if (now - lastSendMs >= SEND_INTERVAL) {
     lastSendMs = now;
     if (imuReady) {
-      if (IMU.accelerationAvailable()) IMU.readAcceleration(ax, ay, az);
-      if (IMU.gyroscopeAvailable()) IMU.readGyroscope(gx, gy, gz);
+
+      if (IMU.accelerationAvailable()) {
+        IMU.readAcceleration(ax, ay, az);
+      }
+
+      if (IMU.gyroscopeAvailable()) {
+
+        IMU.readGyroscope(gx, gy, gz);
+
+        float gyroMagnitude =
+          sqrt(gx * gx + gy * gy + gz * gz);
+
+        if (gyroMagnitude > SWING_THRESHOLD) {
+          randomSwingFlash(gyroMagnitude);
+        }
+      }
     }
+
     int potRaw = analogRead(POT_PIN);
     sensitivity = map(potRaw, 0, 1023, 1, 10);
     publishSensorUdp();
@@ -441,5 +490,43 @@ void loop() {
   if (drawState && (now - lastDrawSyncSend >= DRAW_SYNC_INTERVAL)) {
     lastDrawSyncSend = now;
     pulseDraw();
+  }
+}
+
+// ================= SWING EFFECT =================
+unsigned long lastSwingFlash = 0;
+const unsigned long SWING_FLASH_INTERVAL = 45;
+
+void randomSwingFlash(float gyroMagnitude) {
+
+  unsigned long now = millis();
+
+  if (now - lastSwingFlash < SWING_FLASH_INTERVAL) return;
+
+  lastSwingFlash = now;
+
+  // probability increases with swing speed
+  int chance = constrain(map((int)gyroMagnitude, 220, 800, 15, 95), 15, 95);
+
+  if (random(100) < chance) {
+
+    int flashCount = random(1, 4); // 1 to 3 pixels
+
+    for (int i = 0; i < flashCount; i++) {
+
+      int pixelIndex = random(STAR_LED_COUNT);
+
+      uint8_t r = random(40, 255);
+      uint8_t g = random(40, 255);
+      uint8_t b = random(40, 255);
+
+      pixels.setPixelColor(pixelIndex, rgb(r, g, b));
+    }
+
+    pixels.show();
+
+    delay(8);
+
+    restorePixelsFromDrawState();
   }
 }

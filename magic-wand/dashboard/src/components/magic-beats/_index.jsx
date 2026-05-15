@@ -47,6 +47,7 @@ const FLIP_BASELINE_BLEND = 0.05;
 const FLIP_BASELINE_MIN_SAMPLES = 14;
 const GAME_HUD_RING_SIZE = 104;
 const SCOREBOARD_MAX_ROWS = 300;
+const ENABLE_POST_GAME_NAME_INPUT = false; // temporary toggle
 
 function toScoreRowArray(value) {
   if (Array.isArray(value)) return value;
@@ -80,7 +81,7 @@ function sanitizeScoreRows(rows = []) {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-export default function BeatGame({ className }) {
+export default function BeatGame({ className, onLiveModeChange }) {
   const canvasRef = useRef(null);
   const { sensorData, mousePos, drawState, powerState } = useIMU();
 
@@ -90,6 +91,7 @@ export default function BeatGame({ className }) {
   const [score, setScore] = useState(0);
   const [pendingResult, setPendingResult] = useState(null);
   const [gridVisible, setGridVisible] = useState(false);
+  const [isLiveMode, setIsLiveMode] = useState(false);
   const [isPreviewingSong, setIsPreviewingSong] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(
     typeof document !== "undefined" ? Boolean(document.fullscreenElement) : false,
@@ -180,7 +182,15 @@ export default function BeatGame({ className }) {
   const prevDrawForMenuForceRef = useRef(Boolean(drawState?.draw));
 
   const isMagicWandOn = Boolean(drawState?.draw);
-  const showHighScoreBoard = !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
+  const showHighScoreBoard =
+    !isLiveMode && !isMagicWandOn && !activeSong && !pendingResult && !forceSongMenu;
+  const overlaysReady = isLiveMode || mapReady;
+
+  useEffect(() => {
+    if (typeof onLiveModeChange === "function") {
+      onLiveModeChange(isLiveMode);
+    }
+  }, [isLiveMode, onLiveModeChange]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -589,7 +599,7 @@ export default function BeatGame({ className }) {
       }
       return;
     }
-    if (!mapReady) return;
+    if (!overlaysReady) return;
 
     if (!idleAudioRef.current) {
       const idle = new Audio("/music/foreplay.wav");
@@ -598,7 +608,7 @@ export default function BeatGame({ className }) {
       idleAudioRef.current = idle;
     }
     idleAudioRef.current.play().catch(() => {});
-  }, [activeSong, isPreviewingSong, mapReady]);
+  }, [activeSong, isPreviewingSong, overlaysReady]);
 
   useEffect(() => {
     return () => {
@@ -824,6 +834,13 @@ export default function BeatGame({ className }) {
       if (e.key === "s" || e.key === "S") {
         e.preventDefault();
         exportHighscoresToJson();
+        return;
+      }
+
+      if (e.key === "l" || e.key === "L" || e.key === "v" || e.key === "V") {
+        e.preventDefault();
+        setIsLiveMode((prev) => !prev);
+        return;
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -900,11 +917,15 @@ export default function BeatGame({ className }) {
     audio.play().catch((err) => console.warn('Audio play failed:', err));
     const handleSongEnded = () => {
       endSongDataSession("audio-ended");
-      setPendingResult({
-        song: activeSong,
-        score: scoreRef.current,
-        endedAtMs: Date.now(),
-      });
+      if (ENABLE_POST_GAME_NAME_INPUT) {
+        setPendingResult({
+          song: activeSong,
+          score: scoreRef.current,
+          endedAtMs: Date.now(),
+        });
+      } else {
+        setPendingResult(null);
+      }
       setActiveSong(null);
     };
     audio.addEventListener("ended", handleSongEnded);
@@ -938,34 +959,41 @@ export default function BeatGame({ className }) {
           lerp.y = pos.y;
         }
 
-        const dotColor = isDrawActiveRef.current
-          ? new paper.Color(1, 0.706, 0.231, 0.9)
-          : new paper.Color(0.62, 0.62, 0.62, 0.9);
-
         cursorLayerRef.current.activate();
         const pt = new paper.Point(lerp.x, lerp.y);
-        if (!cursorDotRef.current) {
-          cursorDotRef.current = new paper.Path.Circle({
-            center: pt,
-            radius: 28,
-            fillColor: dotColor,
-            strokeColor: new paper.Color(1, 0.945, 0.867, 0.6),
-            strokeWidth: 3,
-          });
-          cursorDotScaleRef.current = 1;
+        if (isLiveMode) {
+          if (cursorDotRef.current) {
+            cursorDotRef.current.remove();
+            cursorDotRef.current = null;
+            cursorDotScaleRef.current = 1;
+          }
         } else {
-          cursorDotRef.current.position = pt;
-          const clickAge = now - cursorClickTimeRef.current;
-          if (clickAge < 350) {
-            const t = clickAge / 350;
-            const pulse = t < 0.4 ? 1 + (t / 0.4) * 0.9 : 1 + (1 - (t - 0.4) / 0.6) * 0.9;
-            setCursorDotScale(pulse);
-            cursorDotRef.current.fillColor = t < 0.5
-              ? new paper.Color(1, 0.275, 0.51, 0.95)
-              : dotColor;
+          const dotColor = isDrawActiveRef.current
+            ? new paper.Color(1, 0.706, 0.231, 0.9)
+            : new paper.Color(0.62, 0.62, 0.62, 0.9);
+          if (!cursorDotRef.current) {
+            cursorDotRef.current = new paper.Path.Circle({
+              center: pt,
+              radius: 28,
+              fillColor: dotColor,
+              strokeColor: new paper.Color(1, 0.945, 0.867, 0.6),
+              strokeWidth: 3,
+            });
+            cursorDotScaleRef.current = 1;
           } else {
-            setCursorDotScale(1);
-            cursorDotRef.current.fillColor = dotColor;
+            cursorDotRef.current.position = pt;
+            const clickAge = now - cursorClickTimeRef.current;
+            if (clickAge < 350) {
+              const t = clickAge / 350;
+              const pulse = t < 0.4 ? 1 + (t / 0.4) * 0.9 : 1 + (1 - (t - 0.4) / 0.6) * 0.9;
+              setCursorDotScale(pulse);
+              cursorDotRef.current.fillColor = t < 0.5
+                ? new paper.Color(1, 0.275, 0.51, 0.95)
+                : dotColor;
+            } else {
+              setCursorDotScale(1);
+              cursorDotRef.current.fillColor = dotColor;
+            }
           }
         }
 
@@ -1022,134 +1050,149 @@ export default function BeatGame({ className }) {
         }
         trailItemsRef.current = alive;
 
-        cursorDotRef.current.bringToFront();
+        if (cursorDotRef.current) {
+          cursorDotRef.current.bringToFront();
+        }
       }
 
-      // ── Spawn beat ──
-      if (nextOnsetRef.current !== null && now >= nextOnsetRef.current - SHOW_BEFORE) {
-        const onsetTime = nextOnsetRef.current;
-        const margin = BEAT_RADIUS + 20;
-        const bx = margin + Math.random() * (width - margin * 2);
-        const by = margin + Math.random() * (height - margin * 2);
-        const shapeType = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+      if (!isLiveMode) {
+        // ── Spawn beat ──
+        if (nextOnsetRef.current !== null && now >= nextOnsetRef.current - SHOW_BEFORE) {
+          const onsetTime = nextOnsetRef.current;
+          const margin = BEAT_RADIUS + 20;
+          const bx = margin + Math.random() * (width - margin * 2);
+          const by = margin + Math.random() * (height - margin * 2);
+          const shapeType = SHAPES[Math.floor(Math.random() * SHAPES.length)];
 
-        gameLayerRef.current.activate();
+          gameLayerRef.current.activate();
 
-        const approachGroup = makeApproachGroup(bx, by, shapeType);
-        const beatGroup = makeBeatGroup(bx, by, shapeType);
-        const colorLayerCount = Math.max(0, beatGroup.children.length - 4);
-        for (let i = 0; i < colorLayerCount; i++) {
-          beatGroup.children[i].fillColor = new paper.Color({
-            hue: BEAT_HUE_EARLY,
-            saturation: Math.max(0.58, 0.9 - i * 0.08),
-            brightness: Math.max(0.4, 0.98 - i * 0.16),
+          const approachGroup = makeApproachGroup(bx, by, shapeType);
+          const beatGroup = makeBeatGroup(bx, by, shapeType);
+          const colorLayerCount = Math.max(0, beatGroup.children.length - 4);
+          for (let i = 0; i < colorLayerCount; i++) {
+            beatGroup.children[i].fillColor = new paper.Color({
+              hue: BEAT_HUE_EARLY,
+              saturation: Math.max(0.58, 0.9 - i * 0.08),
+              brightness: Math.max(0.4, 0.98 - i * 0.16),
+            });
+          }
+
+          beatsRef.current.push({
+            x: bx, y: by, onsetTime,
+            approachGroup, approachScale: APPROACH_START_RADIUS / BEAT_RADIUS,
+            beatGroup, hit: false, missed: false,
           });
+          nextOnsetRef.current = onsetTime + beatInterval;
         }
 
-        beatsRef.current.push({
-          x: bx, y: by, onsetTime,
-          approachGroup, approachScale: APPROACH_START_RADIUS / BEAT_RADIUS,
-          beatGroup, hit: false, missed: false,
+        // ── Update beats ──
+        const cursorX = lerp?.x ?? 0;
+        const cursorY = lerp?.y ?? 0;
+
+        // ── Fade out resolved beats ──
+        fadingRef.current = fadingRef.current.filter(({ beatGroup, approachGroup, speed }) => {
+          beatGroup.opacity = Math.max(0, beatGroup.opacity - speed);
+          if (beatGroup.opacity <= 0) {
+            beatGroup.remove();
+            approachGroup.remove();
+            return false;
+          }
+          return true;
         });
-        nextOnsetRef.current = onsetTime + beatInterval;
+
+        // ── Update active beats ──
+        beatsRef.current = beatsRef.current.filter((beat) => {
+          if (!beat.beatGroup || !beat.approachGroup) return false;
+
+          const timeToOnset = beat.onsetTime - now;
+          const colorProgress = Math.max(
+            0,
+            Math.min(1, (SHOW_BEFORE - Math.max(timeToOnset, 0)) / SHOW_BEFORE),
+          );
+          const hueNow = BEAT_HUE_EARLY + (BEAT_HUE_ON_TIME - BEAT_HUE_EARLY) * colorProgress;
+          const colorLayerCount = Math.max(0, beat.beatGroup.children.length - 4);
+          for (let i = 0; i < colorLayerCount; i++) {
+            beat.beatGroup.children[i].fillColor = new paper.Color({
+              hue: (hueNow + i * 6) % 360,
+              saturation: Math.max(0.58, 0.9 - i * 0.08),
+              brightness: Math.max(0.4, 0.98 - i * 0.16),
+            });
+          }
+
+          // Gyro hit
+          const dx = cursorX - beat.x;
+          const dy = cursorY - beat.y;
+          const inArea = Math.sqrt(dx * dx + dy * dy) < HIT_RADIUS;
+          const inWindow =
+            timeToOnset <= HIT_WINDOW_BEFORE && timeToOnset >= -HIT_WINDOW_AFTER;
+
+          if (inArea && inWindow) {
+            const isPerfect =
+              timeToOnset <= PERFECT_WINDOW_EARLY_MS &&
+              timeToOnset >= -PERFECT_WINDOW_LATE_MS;
+            const hitColor = new paper.Color(isPerfect ? '#aaff44' : '#44dd88');
+            for (let i = 0; i < 4 && i < beat.beatGroup.children.length; i++) {
+              beat.beatGroup.children[i].fillColor = hitColor;
+            }
+            beat.approachGroup.opacity = 0;
+            socketRef.current?.emit('beat-hit', { perfect: isPerfect, x: beat.x, y: beat.y });
+            triggerHitFeedback(beat.x, beat.y, isPerfect);
+            cursorClickTimeRef.current = performance.now();
+            startTrailFeedback("hit");
+            addScore(isPerfect ? 30 : 10);
+            const { width, height } = canvasSizeRef.current;
+            setLastHitPos({ xNorm: beat.x / width, yNorm: beat.y / height });
+            fadingRef.current.push({ beatGroup: beat.beatGroup, approachGroup: beat.approachGroup, speed: 0.06 });
+            return false;
+          }
+
+          // Auto-miss
+          if (timeToOnset < -HIT_WINDOW_AFTER) {
+            const missColor = new paper.Color('#ff2222');
+            for (let i = 0; i < 4 && i < beat.beatGroup.children.length; i++) {
+              beat.beatGroup.children[i].fillColor = missColor;
+            }
+            beat.approachGroup.opacity = 0;
+            socketRef.current?.emit('beat-miss', { x: beat.x, y: beat.y });
+            startTrailFeedback("miss");
+            fadingRef.current.push({ beatGroup: beat.beatGroup, approachGroup: beat.approachGroup, speed: 0.03 });
+            return false;
+          }
+
+          // Click hit (already colored by click handler, just move to fading)
+          if (beat.hit) {
+            beat.approachGroup.opacity = 0;
+            fadingRef.current.push({ beatGroup: beat.beatGroup, approachGroup: beat.approachGroup, speed: 0.06 });
+            return false;
+          }
+
+          // Approach animation — scale delta each frame to avoid cumulative drift
+          const progress = Math.max(0, Math.min(1, 1 - timeToOnset / SHOW_BEFORE));
+          const pulse = Math.abs(timeToOnset) < 80
+            ? 1 + 0.15 * (1 - Math.abs(timeToOnset) / 80)
+            : 1;
+          const targetR = (APPROACH_START_RADIUS - (APPROACH_START_RADIUS - BEAT_RADIUS) * progress) * pulse;
+          const newScale = targetR / BEAT_RADIUS;
+          const factor = newScale / beat.approachScale;
+          if (Math.abs(factor - 1) > 0.00001) {
+            beat.approachGroup.scale(factor, new paper.Point(beat.x, beat.y));
+            beat.approachScale = newScale;
+          }
+
+          return true;
+        });
+      } else if (beatsRef.current.length || fadingRef.current.length) {
+        beatsRef.current.forEach((beat) => {
+          beat?.beatGroup?.remove();
+          beat?.approachGroup?.remove();
+        });
+        fadingRef.current.forEach(({ beatGroup, approachGroup }) => {
+          beatGroup?.remove();
+          approachGroup?.remove();
+        });
+        beatsRef.current = [];
+        fadingRef.current = [];
       }
-
-      // ── Update beats ──
-      const cursorX = lerp?.x ?? 0;
-      const cursorY = lerp?.y ?? 0;
-
-      // ── Fade out resolved beats ──
-      fadingRef.current = fadingRef.current.filter(({ beatGroup, approachGroup, speed }) => {
-        beatGroup.opacity = Math.max(0, beatGroup.opacity - speed);
-        if (beatGroup.opacity <= 0) {
-          beatGroup.remove();
-          approachGroup.remove();
-          return false;
-        }
-        return true;
-      });
-
-      // ── Update active beats ──
-      beatsRef.current = beatsRef.current.filter((beat) => {
-        if (!beat.beatGroup || !beat.approachGroup) return false;
-
-        const timeToOnset = beat.onsetTime - now;
-        const colorProgress = Math.max(
-          0,
-          Math.min(1, (SHOW_BEFORE - Math.max(timeToOnset, 0)) / SHOW_BEFORE),
-        );
-        const hueNow = BEAT_HUE_EARLY + (BEAT_HUE_ON_TIME - BEAT_HUE_EARLY) * colorProgress;
-        const colorLayerCount = Math.max(0, beat.beatGroup.children.length - 4);
-        for (let i = 0; i < colorLayerCount; i++) {
-          beat.beatGroup.children[i].fillColor = new paper.Color({
-            hue: (hueNow + i * 6) % 360,
-            saturation: Math.max(0.58, 0.9 - i * 0.08),
-            brightness: Math.max(0.4, 0.98 - i * 0.16),
-          });
-        }
-
-        // Gyro hit
-        const dx = cursorX - beat.x;
-        const dy = cursorY - beat.y;
-        const inArea = Math.sqrt(dx * dx + dy * dy) < HIT_RADIUS;
-        const inWindow =
-          timeToOnset <= HIT_WINDOW_BEFORE && timeToOnset >= -HIT_WINDOW_AFTER;
-
-        if (inArea && inWindow) {
-          const isPerfect =
-            timeToOnset <= PERFECT_WINDOW_EARLY_MS &&
-            timeToOnset >= -PERFECT_WINDOW_LATE_MS;
-          const hitColor = new paper.Color(isPerfect ? '#aaff44' : '#44dd88');
-          for (let i = 0; i < 4 && i < beat.beatGroup.children.length; i++) {
-            beat.beatGroup.children[i].fillColor = hitColor;
-          }
-          beat.approachGroup.opacity = 0;
-          socketRef.current?.emit('beat-hit', { perfect: isPerfect, x: beat.x, y: beat.y });
-          triggerHitFeedback(beat.x, beat.y, isPerfect);
-          cursorClickTimeRef.current = performance.now();
-          startTrailFeedback("hit");
-          addScore(isPerfect ? 30 : 10);
-          const { width, height } = canvasSizeRef.current;
-          setLastHitPos({ xNorm: beat.x / width, yNorm: beat.y / height });
-          fadingRef.current.push({ beatGroup: beat.beatGroup, approachGroup: beat.approachGroup, speed: 0.06 });
-          return false;
-        }
-
-        // Auto-miss
-        if (timeToOnset < -HIT_WINDOW_AFTER) {
-          const missColor = new paper.Color('#ff2222');
-          for (let i = 0; i < 4 && i < beat.beatGroup.children.length; i++) {
-            beat.beatGroup.children[i].fillColor = missColor;
-          }
-          beat.approachGroup.opacity = 0;
-          socketRef.current?.emit('beat-miss', { x: beat.x, y: beat.y });
-          startTrailFeedback("miss");
-          fadingRef.current.push({ beatGroup: beat.beatGroup, approachGroup: beat.approachGroup, speed: 0.03 });
-          return false;
-        }
-
-        // Click hit (already colored by click handler, just move to fading)
-        if (beat.hit) {
-          beat.approachGroup.opacity = 0;
-          fadingRef.current.push({ beatGroup: beat.beatGroup, approachGroup: beat.approachGroup, speed: 0.06 });
-          return false;
-        }
-
-        // Approach animation — scale delta each frame to avoid cumulative drift
-        const progress = Math.max(0, Math.min(1, 1 - timeToOnset / SHOW_BEFORE));
-        const pulse = Math.abs(timeToOnset) < 80
-          ? 1 + 0.15 * (1 - Math.abs(timeToOnset) / 80)
-          : 1;
-        const targetR = (APPROACH_START_RADIUS - (APPROACH_START_RADIUS - BEAT_RADIUS) * progress) * pulse;
-        const newScale = targetR / BEAT_RADIUS;
-        const factor = newScale / beat.approachScale;
-        if (Math.abs(factor - 1) > 0.00001) {
-          beat.approachGroup.scale(factor, new paper.Point(beat.x, beat.y));
-          beat.approachScale = newScale;
-        }
-
-        return true;
-      });
 
       paper.view.draw();
     }
@@ -1184,6 +1227,7 @@ export default function BeatGame({ className }) {
     triggerHitFeedback,
     startTrailFeedback,
     addScore,
+    isLiveMode,
   ]);
 
   // ─── CURSOR TARGET from sensor data ───────────────────────────────────────
@@ -1340,8 +1384,11 @@ export default function BeatGame({ className }) {
   }, [stopPromptOpen]);
 
   return (
-    <div className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}>
-      <div
+    <div
+      className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}
+      style={isLiveMode ? { backgroundColor: "#000" } : undefined}
+    >
+      {!isLiveMode && <div
         className="absolute z-0"
         style={!isFullscreen && canvasRect
           ? { left: canvasRect.x, top: canvasRect.y, width: canvasRect.width, height: canvasRect.height }
@@ -1353,7 +1400,8 @@ export default function BeatGame({ className }) {
           startLocation={activeSong?.location}
           onReady={() => setMapReady(true)}
         />
-      </div>
+      </div>}
+      {isLiveMode && <div className="absolute inset-0 z-[5] bg-black pointer-events-none" />}
       <canvas ref={canvasRef} resize="true" className="absolute bg-transparent z-10" />
 
       {/* {sensorData && sensorData.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
@@ -1375,7 +1423,7 @@ export default function BeatGame({ className }) {
         </div>
       )} */}
 
-      {activeSong && gridVisible && (
+      {activeSong && gridVisible && !isLiveMode && (
         <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-cola-brown/60 text-cream-soda font-mono text-xs px-4 py-1.5 rounded-full flex items-center gap-4">
           <span className="pointer-events-none">{activeSong.title} — {activeSong.artist}</span>
           <span className="text-cream-soda/30 pointer-events-none">|</span>
@@ -1392,13 +1440,14 @@ export default function BeatGame({ className }) {
         </div>
       )}
 
-      {activeSong && (
+      {activeSong && !isLiveMode && (
         <div className="absolute top-3 left-3 z-30 pointer-events-none rounded-lg border border-cream-soda/45 bg-black/55 px-3 py-2">
           <p className="text-cream-soda/80 font-mono text-[10px] uppercase tracking-wider">score</p>
           <p className="text-cream-soda font-mono text-2xl font-bold tabular-nums leading-none mt-1">{score}</p>
         </div>
       )}
 
+      {!isLiveMode && (
       <div className="fixed top-3 right-3 pointer-events-none z-[120]">
         <svg width={GAME_HUD_RING_SIZE} height={GAME_HUD_RING_SIZE} viewBox="0 0 120 120">
           <defs>
@@ -1427,8 +1476,9 @@ export default function BeatGame({ className }) {
           </text>
         </svg>
       </div>
+      )}
 
-      {gridVisible && sensorData && sensorData.length > 0 && (
+      {gridVisible && !isLiveMode && sensorData && sensorData.length > 0 && (
         <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-black/60 text-yellow-300 font-mono text-xs px-2 py-1 rounded pointer-events-none flex flex-col gap-0.5 items-center z-30">
           {(() => {
             const s = sensorData[sensorData.length - 1];
@@ -1479,11 +1529,13 @@ export default function BeatGame({ className }) {
       )}
 
       {/* key hints */}
+      {!isLiveMode && (
       <div className="absolute bottom-2 right-2 text-cream-soda/30 font-mono text-[10px] pointer-events-none">
-        H: grid · F: fullscreen · S: save highscores json
+        H: grid · F: fullscreen · S: save highscores json · L: {isLiveMode ? "LIVE" : "MAP"}
       </div>
+      )}
 
-      {!instructionOpen && !activeSong && mapReady && showHighScoreBoard && (
+      {!instructionOpen && !activeSong && overlaysReady && showHighScoreBoard && (
         <HighScoreBoardOverlay
           rows={scoreboardRows}
           wandOn={isMagicWandOn}
@@ -1492,7 +1544,7 @@ export default function BeatGame({ className }) {
           isDrawActive={isDrawActive}
         />
       )}
-      {!instructionOpen && !activeSong && mapReady && !pendingResult && !showHighScoreBoard && (
+      {!instructionOpen && !activeSong && overlaysReady && !pendingResult && !showHighScoreBoard && (
         <SongSelectOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
@@ -1506,7 +1558,7 @@ export default function BeatGame({ className }) {
           isDrawActive={isDrawActive}
         />
       )}
-      {!instructionOpen && !activeSong && mapReady && pendingResult && (
+      {!instructionOpen && !activeSong && overlaysReady && pendingResult && ENABLE_POST_GAME_NAME_INPUT && (
         <PostGameOverlay
           cursor={overlayCursor ?? mousePos ?? menuCursor}
           canvasRect={canvasRect}
@@ -1539,7 +1591,7 @@ export default function BeatGame({ className }) {
         />
       )}
 
-      {instructionOpen && mapReady && (
+      {instructionOpen && overlaysReady && (
         <InstructionOverlay
           runKey={instructionRunKey}
           cursor={menuCursor}
