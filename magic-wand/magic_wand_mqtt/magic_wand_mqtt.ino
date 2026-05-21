@@ -115,6 +115,20 @@ unsigned long lastClickDebounce = 0;
 
 // ================= SENSITIVITY =================
 int sensitivity = 5;
+int potMinSeen = 4095;
+int potMaxSeen = 0;
+const int POT_MIN_SPAN = 64;
+
+int normalizePotToSensitivity(int potRaw) {
+  if (potRaw < potMinSeen) potMinSeen = potRaw;
+  if (potRaw > potMaxSeen) potMaxSeen = potRaw;
+
+  const int span = potMaxSeen - potMinSeen;
+  if (span < POT_MIN_SPAN) return sensitivity;
+
+  const int mapped = map(potRaw, potMinSeen, potMaxSeen, 1, 10);
+  return constrain(mapped, 1, 10);
+}
 
 // ================= NTP =================
 bool ntpBegun   = false;
@@ -589,7 +603,7 @@ void loop() {
     lastSendMs = now;
     readIMU();
     int potRaw = analogRead(POT_PIN);
-    sensitivity = map(potRaw, 0, 4095, 1, 10);
+    sensitivity = normalizePotToSensitivity(potRaw);
     publishMqtt();
   }
 

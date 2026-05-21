@@ -55,6 +55,9 @@ unsigned long lastClickDebounce = 0;
 // ================= IMU =================
 float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
 int sensitivity = 5;
+int potMinSeen = 1023;
+int potMaxSeen = 0;
+const int POT_MIN_SPAN = 24;
 const String deviceName = "kezia-nano33";
 bool imuReady = false;
 
@@ -177,6 +180,17 @@ void sendUdpJson(const String& msg) {
   udp.beginPacket(serverIp, serverUdpPort);
   udp.print(msg);
   udp.endPacket();
+}
+
+int normalizePotToSensitivity(int potRaw) {
+  if (potRaw < potMinSeen) potMinSeen = potRaw;
+  if (potRaw > potMaxSeen) potMaxSeen = potRaw;
+
+  const int span = potMaxSeen - potMinSeen;
+  if (span < POT_MIN_SPAN) return sensitivity;
+
+  const int mapped = map(potRaw, potMinSeen, potMaxSeen, 1, 10);
+  return constrain(mapped, 1, 10);
 }
 
 void publishPower(bool on) {
@@ -479,7 +493,7 @@ void loop() {
     }
 
     int potRaw = analogRead(POT_PIN);
-    sensitivity = map(potRaw, 0, 1023, 1, 10);
+    sensitivity = normalizePotToSensitivity(potRaw);
     publishSensorUdp();
     if (now - lastDebugPrintMs >= DEBUG_PRINT_INTERVAL) {
       lastDebugPrintMs = now;

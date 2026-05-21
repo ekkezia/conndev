@@ -48,6 +48,16 @@ const FLIP_BASELINE_MIN_SAMPLES = 14;
 const GAME_HUD_RING_SIZE = 104;
 const SCOREBOARD_MAX_ROWS = 300;
 const ENABLE_POST_GAME_NAME_INPUT = false; // temporary toggle
+const WIDE_CANVAS_RATIO_TARGET = 9.36;
+const WIDE_CANVAS_RATIO_EPSILON = 0.02;
+const IS_WIDE_CANVAS_936 = Math.abs(CANVAS_RATIO - WIDE_CANVAS_RATIO_TARGET) < WIDE_CANVAS_RATIO_EPSILON;
+const CURSOR_SIZE_SCALE = IS_WIDE_CANVAS_936 ? 0.88 : 1;
+const TRAIL_SIZE_SCALE = IS_WIDE_CANVAS_936 ? 0.82 : 1;
+const BEAT_SIZE_SCALE = IS_WIDE_CANVAS_936 ? 0.45 : 1;
+const EFFECTIVE_BEAT_RADIUS = BEAT_RADIUS * BEAT_SIZE_SCALE;
+const EFFECTIVE_HIT_RADIUS = HIT_RADIUS * (IS_WIDE_CANVAS_936 ? 0.72 : 1);
+const HIT_FEEDBACK_TEXT_CLASS = IS_WIDE_CANVAS_936 ? "text-xl" : "text-4xl";
+const MENU_UI_SCALE = IS_WIDE_CANVAS_936 ? 0.52 : 1;
 
 function toScoreRowArray(value) {
   if (Array.isArray(value)) return value;
@@ -279,10 +289,11 @@ export default function BeatGame({ className, onLiveModeChange }) {
   })();
 
   const canOpenInstructionNow = useCallback(() => {
+    if (isLiveMode) return false;
     if (!instructionCompleted) return true;
     // After first completion, only allow reopening when wand draw is OFF and gameplay is idle.
     return !isDrawActive && !activeSong && !pendingResult;
-  }, [instructionCompleted, isDrawActive, activeSong, pendingResult]);
+  }, [isLiveMode, instructionCompleted, isDrawActive, activeSong, pendingResult]);
 
   const startSongDataSession = useCallback((song) => {
     if (!song) return;
@@ -395,6 +406,10 @@ export default function BeatGame({ className, onLiveModeChange }) {
   }, [activeSong]);
 
   const enterInstructionOverlay = useCallback(() => {
+    if (isLiveMode) {
+      console.log("🪄 instruction open blocked in LIVE mode");
+      return false;
+    }
     if (!canOpenInstructionNow()) {
       console.log("🪄 instruction open blocked: completed tutorial requires draw OFF + idle game");
       return false;
@@ -403,7 +418,15 @@ export default function BeatGame({ className, onLiveModeChange }) {
     setInstructionRunKey((k) => k + 1);
     setInstructionOpen(true);
     return true;
-  }, [canOpenInstructionNow]);
+  }, [isLiveMode, canOpenInstructionNow]);
+
+  useEffect(() => {
+    if (!isLiveMode) return;
+    if (instructionOpen) {
+      setInstructionOpen(false);
+      setForceSongMenu(false);
+    }
+  }, [isLiveMode, instructionOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -732,6 +755,10 @@ export default function BeatGame({ className, onLiveModeChange }) {
     const cy = Math.round(height / 2 / UNIT) * UNIT;
     new paper.Path.Line({ from: [0, cy], to: [width, cy], strokeColor: new paper.Color(1, 0.945, 0.867, 0.6), strokeWidth: 1 });
     new paper.Path.Line({ from: [cx, 0], to: [cx, height], strokeColor: new paper.Color(1, 0.945, 0.867, 0.6), strokeWidth: 1 });
+    const col1 = width / 3;
+    const col2 = (width * 2) / 3;
+    new paper.Path.Line({ from: [col1, 0], to: [col1, height], strokeColor: new paper.Color(1, 0.945, 0.867, 0.85), strokeWidth: 2.5 });
+    new paper.Path.Line({ from: [col2, 0], to: [col2, height], strokeColor: new paper.Color(1, 0.945, 0.867, 0.85), strokeWidth: 2.5 });
 
     // Grid + axes hidden by default; press H to toggle
     gridLayerRef.current.visible = false;
@@ -870,7 +897,7 @@ export default function BeatGame({ className, onLiveModeChange }) {
         if (beat.hit || beat.missed) continue;
         const dx = cx - beat.x;
         const dy = cy - beat.y;
-        if (Math.sqrt(dx * dx + dy * dy) >= HIT_RADIUS) continue;
+        if (Math.sqrt(dx * dx + dy * dy) >= EFFECTIVE_HIT_RADIUS) continue;
         const timeToOnset = beat.onsetTime - now;
         const inWindow =
           timeToOnset <= HIT_WINDOW_BEFORE && timeToOnset >= -HIT_WINDOW_AFTER;
@@ -961,39 +988,43 @@ export default function BeatGame({ className, onLiveModeChange }) {
 
         cursorLayerRef.current.activate();
         const pt = new paper.Point(lerp.x, lerp.y);
-        if (isLiveMode) {
-          if (cursorDotRef.current) {
-            cursorDotRef.current.remove();
-            cursorDotRef.current = null;
-            cursorDotScaleRef.current = 1;
-          }
-        } else {
-          const dotColor = isDrawActiveRef.current
+        const dotMode = isLiveMode ? "live" : "default";
+        const dotRadius = (isLiveMode ? 16 : 28) * CURSOR_SIZE_SCALE;
+        const dotColor = isLiveMode
+          ? new paper.Color(1, 0.706, 0.231, 0.95)
+          : isDrawActiveRef.current
             ? new paper.Color(1, 0.706, 0.231, 0.9)
             : new paper.Color(0.62, 0.62, 0.62, 0.9);
-          if (!cursorDotRef.current) {
-            cursorDotRef.current = new paper.Path.Circle({
-              center: pt,
-              radius: 28,
-              fillColor: dotColor,
-              strokeColor: new paper.Color(1, 0.945, 0.867, 0.6),
-              strokeWidth: 3,
-            });
-            cursorDotScaleRef.current = 1;
+
+        if (cursorDotRef.current && cursorDotRef.current.data?.mode !== dotMode) {
+          cursorDotRef.current.remove();
+          cursorDotRef.current = null;
+          cursorDotScaleRef.current = 1;
+        }
+
+        if (!cursorDotRef.current) {
+          cursorDotRef.current = new paper.Path.Circle({
+            center: pt,
+            radius: dotRadius,
+            fillColor: dotColor,
+            strokeColor: new paper.Color(1, 0.945, 0.867, 0.6),
+            strokeWidth: isLiveMode ? 2 : 3,
+          });
+          cursorDotRef.current.data = { mode: dotMode };
+          cursorDotScaleRef.current = 1;
+        } else {
+          cursorDotRef.current.position = pt;
+          const clickAge = now - cursorClickTimeRef.current;
+          if (clickAge < 350) {
+            const t = clickAge / 350;
+            const pulse = t < 0.4 ? 1 + (t / 0.4) * 0.9 : 1 + (1 - (t - 0.4) / 0.6) * 0.9;
+            setCursorDotScale(pulse);
+            cursorDotRef.current.fillColor = t < 0.5
+              ? new paper.Color(1, 0.275, 0.51, 0.95)
+              : dotColor;
           } else {
-            cursorDotRef.current.position = pt;
-            const clickAge = now - cursorClickTimeRef.current;
-            if (clickAge < 350) {
-              const t = clickAge / 350;
-              const pulse = t < 0.4 ? 1 + (t / 0.4) * 0.9 : 1 + (1 - (t - 0.4) / 0.6) * 0.9;
-              setCursorDotScale(pulse);
-              cursorDotRef.current.fillColor = t < 0.5
-                ? new paper.Color(1, 0.275, 0.51, 0.95)
-                : dotColor;
-            } else {
-              setCursorDotScale(1);
-              cursorDotRef.current.fillColor = dotColor;
-            }
+            setCursorDotScale(1);
+            cursorDotRef.current.fillColor = dotColor;
           }
         }
 
@@ -1023,8 +1054,8 @@ export default function BeatGame({ className, onLiveModeChange }) {
           const trailPath = new paper.Path.Star({
             center: pt,
             points: 4,
-            radius1: 12 + Math.random() * 10,
-            radius2: 38 + Math.random() * 22,
+            radius1: (12 + Math.random() * 10) * TRAIL_SIZE_SCALE,
+            radius2: (38 + Math.random() * 22) * TRAIL_SIZE_SCALE,
             fillColor: color,
             strokeColor: null,
           });
@@ -1055,11 +1086,13 @@ export default function BeatGame({ className, onLiveModeChange }) {
         }
       }
 
+
+      // toggle here
       if (!isLiveMode) {
         // ── Spawn beat ──
         if (nextOnsetRef.current !== null && now >= nextOnsetRef.current - SHOW_BEFORE) {
           const onsetTime = nextOnsetRef.current;
-          const margin = BEAT_RADIUS + 20;
+          const margin = EFFECTIVE_BEAT_RADIUS + 20;
           const bx = margin + Math.random() * (width - margin * 2);
           const by = margin + Math.random() * (height - margin * 2);
           const shapeType = SHAPES[Math.floor(Math.random() * SHAPES.length)];
@@ -1068,6 +1101,11 @@ export default function BeatGame({ className, onLiveModeChange }) {
 
           const approachGroup = makeApproachGroup(bx, by, shapeType);
           const beatGroup = makeBeatGroup(bx, by, shapeType);
+          if (BEAT_SIZE_SCALE !== 1) {
+            const center = new paper.Point(bx, by);
+            approachGroup.scale(BEAT_SIZE_SCALE, center);
+            beatGroup.scale(BEAT_SIZE_SCALE, center);
+          }
           const colorLayerCount = Math.max(0, beatGroup.children.length - 4);
           for (let i = 0; i < colorLayerCount; i++) {
             beatGroup.children[i].fillColor = new paper.Color({
@@ -1122,7 +1160,7 @@ export default function BeatGame({ className, onLiveModeChange }) {
           // Gyro hit
           const dx = cursorX - beat.x;
           const dy = cursorY - beat.y;
-          const inArea = Math.sqrt(dx * dx + dy * dy) < HIT_RADIUS;
+        const inArea = Math.sqrt(dx * dx + dy * dy) < EFFECTIVE_HIT_RADIUS;
           const inWindow =
             timeToOnset <= HIT_WINDOW_BEFORE && timeToOnset >= -HIT_WINDOW_AFTER;
 
@@ -1386,9 +1424,8 @@ export default function BeatGame({ className, onLiveModeChange }) {
   return (
     <div
       className={`retro-text absolute top-0 left-0 w-full h-full ${className ?? ''}`}
-      style={isLiveMode ? { backgroundColor: "#000" } : undefined}
     >
-      {!isLiveMode && <div
+      <div
         className="absolute z-0"
         style={!isFullscreen && canvasRect
           ? { left: canvasRect.x, top: canvasRect.y, width: canvasRect.width, height: canvasRect.height }
@@ -1400,8 +1437,7 @@ export default function BeatGame({ className, onLiveModeChange }) {
           startLocation={activeSong?.location}
           onReady={() => setMapReady(true)}
         />
-      </div>}
-      {isLiveMode && <div className="absolute inset-0 z-[5] bg-black pointer-events-none" />}
+      </div>
       <canvas ref={canvasRef} resize="true" className="absolute bg-transparent z-10" />
 
       {/* {sensorData && sensorData.length > 0 && sensorData[sensorData.length - 1]?.sensor?.sensitivity != null && (
@@ -1517,7 +1553,7 @@ export default function BeatGame({ className, onLiveModeChange }) {
           style={{ left: (canvasRect?.x ?? 0) + hitFeedback.x, top: (canvasRect?.y ?? 0) + hitFeedback.y, transform: 'translate(-50%, -130%)' }}
         >
           <span
-            className="retro-text text-4xl font-bold tracking-widest whitespace-nowrap"
+            className={`retro-text ${HIT_FEEDBACK_TEXT_CLASS} font-bold tracking-widest whitespace-nowrap`}
             style={{
               animation: 'perfectPop 0.9s ease-out forwards',
               color: hitFeedback.isPerfect ? '#fff7e6' : '#d6ffd9',
@@ -1542,12 +1578,14 @@ export default function BeatGame({ className, onLiveModeChange }) {
           cursor={menuCursor}
           canvasRect={canvasRect}
           isDrawActive={isDrawActive}
+          uiScale={MENU_UI_SCALE}
         />
       )}
       {!instructionOpen && !activeSong && overlaysReady && !pendingResult && !showHighScoreBoard && (
         <SongSelectOverlay
           cursor={menuCursor}
           canvasRect={canvasRect}
+          uiScale={MENU_UI_SCALE}
           onPreviewStateChange={setIsPreviewingSong}
           onStart={(song) => {
             setPendingResult(null);
@@ -1562,6 +1600,7 @@ export default function BeatGame({ className, onLiveModeChange }) {
         <PostGameOverlay
           cursor={overlayCursor ?? mousePos ?? menuCursor}
           canvasRect={canvasRect}
+          uiScale={MENU_UI_SCALE}
           song={pendingResult.song}
           score={pendingResult.score}
           playedAtMs={pendingResult.endedAtMs}
@@ -1591,11 +1630,12 @@ export default function BeatGame({ className, onLiveModeChange }) {
         />
       )}
 
-      {instructionOpen && overlaysReady && (
+      {instructionOpen && overlaysReady && !isLiveMode && (
         <InstructionOverlay
           runKey={instructionRunKey}
           cursor={menuCursor}
           canvasRect={canvasRect}
+          uiScale={MENU_UI_SCALE}
           isDrawActive={isDrawActive}
           drawState={drawState}
           powerState={powerState}
@@ -1629,6 +1669,7 @@ export default function BeatGame({ className, onLiveModeChange }) {
         <StopPromptOverlay
           cursor={overlayCursor ?? mousePos ?? menuCursor}
           canvasRect={canvasRect}
+          uiScale={MENU_UI_SCALE}
           onConfirm={confirmStopToMenu}
           onCancel={resumeFromStopPrompt}
         />

@@ -43,6 +43,7 @@ export default function InstructionOverlay({
   runKey,
   cursor,
   canvasRect,
+  uiScale = 1,
   isDrawActive = true,
   drawState,
   powerState,
@@ -230,7 +231,10 @@ export default function InstructionOverlay({
         />
       </svg>
 
-      <div className="w-full max-w-5xl px-6">
+      <div
+        className="w-full max-w-5xl px-6"
+        style={{ transform: `scale(${uiScale})`, transformOrigin: "center center" }}
+      >
         <div className="rounded-3xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/52 via-[#ff8a86]/36 to-[#ffb43b]/48 shadow-2xl backdrop-blur-md p-7 md:p-9">
           <div className="flex items-center justify-between gap-4 mb-6">
             <h2 className="text-cream-soda font-mono text-4xl font-bold tracking-tight">

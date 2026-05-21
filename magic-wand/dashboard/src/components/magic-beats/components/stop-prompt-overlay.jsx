@@ -5,6 +5,7 @@ import WandCursorSVG from "./wand-cursor-svg";
 export default function StopPromptOverlay({
   cursor,
   canvasRect,
+  uiScale = 1,
   onConfirm,
   onCancel,
 }) {
@@ -59,7 +60,10 @@ export default function StopPromptOverlay({
         />
       </svg>
 
-      <div className="w-full max-w-xl px-6">
+      <div
+        className="w-full max-w-xl px-6"
+        style={{ transform: `scale(${uiScale})`, transformOrigin: "center center" }}
+      >
         <div className="rounded-2xl border border-cream-soda/55 bg-cola-brown/95 p-7 md:p-8 shadow-2xl"
           style={{
             background: 'rgba(243, 74, 167, 0.9)',

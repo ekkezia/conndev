@@ -21,6 +21,7 @@ export default function HighScoreBoardOverlay({
   cursor,
   canvasRect,
   isDrawActive = true,
+  uiScale = 1,
 }) {
   const listScrollRef = useRef(null);
   const scrollUpRef = useRef(null);
@@ -92,7 +93,10 @@ export default function HighScoreBoardOverlay({
           isDrawActive={isDrawActive}
         />
       </svg>
-      <div className="w-full max-w-5xl px-6">
+      <div
+        className="w-full max-w-5xl px-6"
+        style={{ transform: `scale(${uiScale})`, transformOrigin: "center center" }}
+      >
         <div className="relative pointer-events-auto rounded-2xl border border-cream-soda/35 bg-gradient-to-br from-[#ff4fa3]/35 via-[#ff8a86]/35 to-[#ffb43b]/80 p-6 shadow-2xl overflow-hidden isolate"
           style={{
             background: 'linear-gradient(135deg, rgba(82, 6, 43, 0.5) 0%, rgba(255,138,134,0.5) 50%, rgba(255,180,59,0.5) 100%)',

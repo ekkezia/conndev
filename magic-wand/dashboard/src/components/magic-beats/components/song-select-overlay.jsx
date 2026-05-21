@@ -6,6 +6,7 @@ import WandCursorSVG from "./wand-cursor-svg";
 export default function SongSelectOverlay({
   cursor,
   canvasRect,
+  uiScale = 1,
   onStart,
   onPreviewStateChange,
   isDrawActive = true,
@@ -150,7 +151,10 @@ export default function SongSelectOverlay({
       <svg className="absolute inset-0 z-[140] w-full h-full overflow-visible pointer-events-none">
         <WandCursorSVG activeCursor={activeCursor} trailItems={trailItems} clickKey={clickKey} isDrawActive={isDrawActive} />
       </svg>
-      <div className="w-full max-w-2xl px-6">
+      <div
+        className="w-full max-w-2xl px-6"
+        style={{ transform: `scale(${uiScale})`, transformOrigin: "center center" }}
+      >
         <div className="relative rounded-3xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/48 via-[#ff8a86]/34 to-[#ffb43b]/42 shadow-2xl backdrop-blur-md p-8 md:p-10 flex flex-col gap-6 overflow-hidden isolate"
           style={{
             background: 'linear-gradient(135deg, rgba(255,79,163,0.3) 0%, rgba(255,138,134,0.5) 50%, rgba(255,180,59,0.25) 100%)',

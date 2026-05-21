@@ -60,6 +60,9 @@ unsigned long lastClickDebounce = 0;
 // ================= IMU =================
 float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
 int sensitivity = 5;
+int potMinSeen = 1023;
+int potMaxSeen = 0;
+const int POT_MIN_SPAN = 24;
 bool ntpBegun = false;
 bool ntpStarted = false;
 bool imuReady = false;
@@ -332,6 +335,17 @@ void publishSensorMqtt() {
   mqttClient.endMessage();
 }
 
+int normalizePotToSensitivity(int potRaw) {
+  if (potRaw < potMinSeen) potMinSeen = potRaw;
+  if (potRaw > potMaxSeen) potMaxSeen = potRaw;
+
+  const int span = potMaxSeen - potMinSeen;
+  if (span < POT_MIN_SPAN) return sensitivity;
+
+  const int mapped = map(potRaw, potMinSeen, potMaxSeen, 1, 10);
+  return constrain(mapped, 1, 10);
+}
+
 void printDebugReadings(int potRaw) {
   Serial.print("[DBG] potRaw=");
   Serial.print(potRaw);
@@ -498,7 +512,7 @@ void loop() {
       if (IMU.gyroscopeAvailable()) IMU.readGyroscope(gx, gy, gz);
     }
     int potRaw = analogRead(POT_PIN);
-    sensitivity = map(potRaw, 0, 1023, 1, 10);
+    sensitivity = normalizePotToSensitivity(potRaw);
     publishSensorMqtt();
     if (now - lastDebugPrintMs >= DEBUG_PRINT_INTERVAL) {
       lastDebugPrintMs = now;

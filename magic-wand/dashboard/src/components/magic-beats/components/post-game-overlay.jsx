@@ -12,6 +12,7 @@ export default function PostGameOverlay({
 	cursor,
 	canvasRect,
 	isDrawActive = true,
+	uiScale = 1,
 	song,
 	score,
 	playedAtMs,
@@ -156,7 +157,10 @@ export default function PostGameOverlay({
 				/>
 			</svg>
 
-			<div className="w-full max-w-6xl px-6">
+			<div
+				className="w-full max-w-6xl px-6"
+				style={{ transform: `scale(${uiScale})`, transformOrigin: "center center" }}
+			>
 				<div
 					className="rounded-2xl border border-cream-soda/55 bg-gradient-to-br from-[#ff4fa3]/46 via-[#ff8a86]/34 to-[#ffb43b]/42 p-6 md:p-8 shadow-2xl"
 					style={{
