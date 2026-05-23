@@ -246,7 +246,39 @@ export default function DrawingDisplay({ className }) {
   // GENERIC DRAW FUNCTION — draws smooth curves
   // canvasX/canvasY are already mapped to canvas coordinate space
   // =================================================
-  function drawSmoothedLine(canvasX, canvasY, mag, layer, posRef, prevRef, opacity = 1) {
+  function normalizeHsvColor(input) {
+    if (!input) return null;
+    const arr = Array.isArray(input)
+      ? input
+      : [input?.h ?? input?.hue, input?.s ?? input?.saturation, input?.v ?? input?.value ?? input?.brightness];
+    if (!arr || arr.length < 3) return null;
+
+    const h = Number(arr[0]);
+    const s = Number(arr[1]);
+    const v = Number(arr[2]);
+    if (!Number.isFinite(h) || !Number.isFinite(s) || !Number.isFinite(v)) return null;
+
+    return {
+      hue: Math.max(0, Math.min(360, h)),
+      saturation: Math.max(0, Math.min(1, s / 100)),
+      brightness: Math.max(0, Math.min(1, v / 100)),
+    };
+  }
+
+  function sensorCursorColor(sensor) {
+    const hsv = normalizeHsvColor(
+      sensor?.realtimeColor ?? sensor?.sampledColorHsv ?? sensor?.pickedColor ?? sensor?.color
+    );
+    if (!hsv) return new paper.Color(1, 0, 1, 0.9);
+    return new paper.Color({
+      hue: hsv.hue,
+      saturation: hsv.saturation,
+      brightness: hsv.brightness,
+      alpha: 0.95,
+    });
+  }
+
+  function drawSmoothedLine(canvasX, canvasY, mag, layer, posRef, prevRef, opacity = 1, hsvColor = null) {
     if (!layer || !posRef.current || !prevRef.current) return;
     if (isNaN(canvasX) || isNaN(canvasY)) return;
 
@@ -267,12 +299,19 @@ export default function DrawingDisplay({ className }) {
       ((motion - 0) * (maxStrokeWidth - minStrokeWidth)) / (maxMotion - 0) +
       minStrokeWidth;
 
-    // Determine color based on layer
+    const hsv = normalizeHsvColor(hsvColor);
     let strokeColor;
-    if (layer === playbackLayerRef.current) {
-      strokeColor = new paper.Color(0, 0, 0, opacity); // black
+    if (hsv) {
+      strokeColor = new paper.Color({
+        hue: hsv.hue,
+        saturation: hsv.saturation,
+        brightness: hsv.brightness,
+        alpha: opacity,
+      });
+    } else if (layer === playbackLayerRef.current) {
+      strokeColor = new paper.Color(0, 0, 0, opacity);
     } else {
-      strokeColor = new paper.Color(1, 0, 1, opacity); // fuchsia
+      strokeColor = new paper.Color(1, 0, 1, opacity);
     }
 
     // Draw smooth curve from previous to current position
@@ -310,16 +349,7 @@ export default function DrawingDisplay({ className }) {
     const canvasX = Math.max(0, Math.min((mouseTargetX / screenW) * canvasWidth, canvasWidth));
     const canvasY = Math.max(0, Math.min((mouseTargetY / screenH) * canvasHeight, canvasHeight));
 
-    // Color logic
-    let color = {
-      path: new paper.Color(1, 0, 1, 0.8), // fuchsia
-      unCalibratedMouse: new paper.Color(1, 0, 0, 0.8), // red
-      calibratedMouse: new paper.Color(1, 1, 0, 0.9), // yellow
-    };
-    let currentMouseColor = color.unCalibratedMouse;
-    if (s.calibrated) {
-      currentMouseColor = color.calibratedMouse;
-    }
+    const currentMouseColor = sensorCursorColor(s.sensor);
 
     realtimeLayerRef.current.activate();
     const pt = new paper.Point(canvasX, canvasY);
@@ -379,16 +409,7 @@ export default function DrawingDisplay({ className }) {
         lerp.y = lerp.y + (target.y - lerp.y) * t;
         mouseDotLerpRef.current = lerp;
 
-        // Color logic (keep as before)
-        let color = {
-          path: new paper.Color(1, 0, 1, 0.8), // fuchsia
-          unCalibratedMouse: new paper.Color(1, 0, 1, 0.8), // fuchsia
-          calibratedMouse: new paper.Color(1, 1, 0, 0.9), // yellow
-        }
-        let currentMouseColor = color.unCalibratedMouse;
-        if (target.s?.calibrated) {
-          currentMouseColor = color.calibratedMouse;
-        }
+        const currentMouseColor = sensorCursorColor(target.s?.sensor);
 
         realtimeLayerRef.current.activate();
         const pt = new paper.Point(lerp.x, lerp.y);
@@ -470,6 +491,7 @@ export default function DrawingDisplay({ className }) {
     if (!s?.sensor || !s?.screenSize) return;
 
     const { mouseTargetX, mouseTargetY, mag } = s.sensor;
+    const pickedColor = s.sensor?.pickedColor ?? s.sensor?.color ?? null;
     const { width: screenW, height: screenH } = s.screenSize;
     if (!screenW || !screenH) return;
 
@@ -480,7 +502,7 @@ export default function DrawingDisplay({ className }) {
 
     // Seed lerp position on very first data point
     if (!realtimeLerpRef.current) {
-      realtimeLerpRef.current = { x: canvasX, y: canvasY, mag: mag ?? 1 };
+      realtimeLerpRef.current = { x: canvasX, y: canvasY, mag: mag ?? 1, color: pickedColor };
       realtimeLastDrawnRef.current = { x: canvasX, y: canvasY };
       realtimePrevRef.current = new paper.Point(canvasX, canvasY);
       realtimePrevRef.current.mag = mag ?? 1;
@@ -488,7 +510,7 @@ export default function DrawingDisplay({ className }) {
     }
 
     // Always update the target — the rAF loop will chase it
-    realtimeTargetRef.current = { x: canvasX, y: canvasY, mag: mag ?? 1 };
+    realtimeTargetRef.current = { x: canvasX, y: canvasY, mag: mag ?? 1, color: pickedColor };
   }, [sensorData, playbackMode]);
 
   // Single persistent rAF loop — starts once, runs until playbackMode or unmount
@@ -516,7 +538,7 @@ export default function DrawingDisplay({ className }) {
       const lmag = (lerp.mag ?? 1) + ((target.mag ?? 1) - (lerp.mag ?? 1)) * LERP_FACTOR;
 
       // Write back lerp position
-      realtimeLerpRef.current = { x: lx, y: ly, mag: lmag };
+      realtimeLerpRef.current = { x: lx, y: ly, mag: lmag, color: target.color ?? null };
 
       // Only draw if moved enough and draw mode is on
       if (!drawStateRef.current?.draw) return;
@@ -538,7 +560,16 @@ export default function DrawingDisplay({ className }) {
         return;
       }
 
-      drawSmoothedLine(lx, ly, lmag, realtimeLayerRef.current, realtimePosRef, realtimePrevRef);
+      drawSmoothedLine(
+        lx,
+        ly,
+        lmag,
+        realtimeLayerRef.current,
+        realtimePosRef,
+        realtimePrevRef,
+        1,
+        target.color ?? null,
+      );
       // drawSmoothedLine updates realtimePrevRef internally — sync lastDrawn to match
       realtimeLastDrawnRef.current = { x: lx, y: ly };
     };
@@ -580,12 +611,13 @@ export default function DrawingDisplay({ className }) {
     const getPoint = (entry) => {
       if (!entry?.sensor || !entry?.screenSize) return null;
       const { mouseTargetX, mouseTargetY, mag } = entry.sensor;
+      const pickedColor = entry.sensor?.pickedColor ?? entry.sensor?.color ?? null;
       const { width: screenW, height: screenH } = entry.screenSize;
       if (mouseTargetX == null || !screenW || !screenH) return null;
       const x = Math.max(0, Math.min((mouseTargetX / screenW) * width, width));
       const y = Math.max(0, Math.min((mouseTargetY / screenH) * height, height));
       if (isNaN(x) || isNaN(y)) return null;
-      return { x, y, mag: mag ?? 1 };
+      return { x, y, mag: mag ?? 1, color: pickedColor };
     };
 
     const targetIdx = playbackStatus.currentDataIdx ?? (playbackData.length - 1);
@@ -612,7 +644,16 @@ export default function DrawingDisplay({ className }) {
           lerpPosRef.current = { x: pt.x, y: pt.y };
           firstPt = pt;
         } else {
-          drawSmoothedLine(pt.x, pt.y, pt.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+          drawSmoothedLine(
+            pt.x,
+            pt.y,
+            pt.mag,
+            playbackLayerRef.current,
+            playbackPosRef,
+            playbackPrevRef,
+            1,
+            pt.color,
+          );
         }
         prevDraw = entry.draw;
       }
@@ -669,14 +710,32 @@ export default function DrawingDisplay({ className }) {
       const dx = x - playbackPrevRef.current.x;
       const dy = y - playbackPrevRef.current.y;
       if (Math.sqrt(dx * dx + dy * dy) > 0.5) {
-        drawSmoothedLine(x, y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+        drawSmoothedLine(
+          x,
+          y,
+          target.mag,
+          playbackLayerRef.current,
+          playbackPosRef,
+          playbackPrevRef,
+          1,
+          target.color,
+        );
       }
 
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(animate);
       } else {
         // Snap exactly to target
-        drawSmoothedLine(target.x, target.y, target.mag, playbackLayerRef.current, playbackPosRef, playbackPrevRef);
+        drawSmoothedLine(
+          target.x,
+          target.y,
+          target.mag,
+          playbackLayerRef.current,
+          playbackPosRef,
+          playbackPrevRef,
+          1,
+          target.color,
+        );
         lerpPosRef.current = { x: target.x, y: target.y };
         lastDrawnIdxRef.current = targetIdx;
         animFrameRef.current = null;
